@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.clients.supabase import SupabaseConfigError
 from app.schemas.paper import (
+    ArxivImportRequest,
+    ArxivImportResponse,
     PaperActionCreate,
     PaperActionResponse,
     PaperCreate,
@@ -26,6 +28,13 @@ def _raise_storage_http_error(error: Exception) -> NoReturn:
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail="Paper storage request failed",
+    ) from error
+
+
+def _raise_import_http_error(error: Exception) -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="arXiv import request failed",
     ) from error
 
 
@@ -100,6 +109,22 @@ def get_paper(paper_id: UUID) -> PaperResponse:
 def create_paper(paper_create: PaperCreate) -> PaperResponse:
     try:
         return paper_service.create_paper(paper_create)
+    except (SupabaseConfigError, paper_service.PaperStorageError) as error:
+        _raise_storage_http_error(error)
+
+
+@router.post(
+    "/import/arxiv",
+    response_model=ArxivImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def import_arxiv_papers(
+    import_request: ArxivImportRequest,
+) -> ArxivImportResponse:
+    try:
+        return paper_service.import_arxiv_papers(import_request)
+    except paper_service.PaperImportError as error:
+        _raise_import_http_error(error)
     except (SupabaseConfigError, paper_service.PaperStorageError) as error:
         _raise_storage_http_error(error)
 

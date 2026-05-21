@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
+.env.local
+.pytest_cache/
 node_modules/
 .next/
 dist/

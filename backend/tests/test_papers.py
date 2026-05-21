@@ -12,8 +12,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.clients import arxiv as arxiv_client
 from app.main import app
-from app.services import auth_service, paper_service
+from app.repositories import paper_repository
+from app.services import auth_service
 from app.services.paper_service import list_paper_actions
 
 
@@ -52,6 +54,33 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
             "updated_at": now,
         }
 
+    def upsert_paper_row(payload: dict) -> dict:
+        papers = storage["papers"]
+        if not isinstance(papers, dict):
+            raise AssertionError("papers storage must be a dict")
+
+        arxiv_id = payload.get("arxiv_id")
+        if arxiv_id:
+            for paper_id, paper in papers.items():
+                if paper["arxiv_id"] == arxiv_id:
+                    paper.update(
+                        {
+                            "title": payload["title"],
+                            "abstract": payload.get("abstract"),
+                            "source_url": payload.get("source_url"),
+                            "doi": payload.get("doi"),
+                            "authors": payload.get("authors", []),
+                            "published_at": payload.get("published_at"),
+                            "updated_at": now_iso(),
+                        }
+                    )
+                    papers[paper_id] = paper
+                    return paper
+
+        row = build_paper_row(payload)
+        papers[row["id"]] = row
+        return row
+
     def build_action_row(payload: dict) -> dict:
         return {
             "id": str(uuid4()),
@@ -81,7 +110,12 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
             return httpx.Response(200, json=rows)
 
         if request.method == "POST":
-            row = build_paper_row(read_json(request))
+            payload = read_json(request)
+            if isinstance(payload, list):
+                rows = [upsert_paper_row(item) for item in payload]
+                return httpx.Response(201, json=rows)
+
+            row = build_paper_row(payload)
             papers[row["id"]] = row
             return httpx.Response(201, json=[row])
 
@@ -134,6 +168,28 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
             },
         )
 
+    def handle_arxiv_request(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/api/query":
+            return httpx.Response(404, text="not found")
+
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom"
+              xmlns:arxiv="http://arxiv.org/schemas/atom">
+          <entry>
+            <id>https://arxiv.org/abs/2501.01234v1</id>
+            <title> Retrieval-Augmented Backend APIs </title>
+            <summary>
+              This paper studies retrieval-augmented backend API design.
+            </summary>
+            <published>2025-01-02T00:00:00Z</published>
+            <author><name>Alice Example</name></author>
+            <author><name>Bob Example</name></author>
+            <arxiv:doi>10.0000/example</arxiv:doi>
+          </entry>
+        </feed>
+        """
+        return httpx.Response(200, text=xml)
+
     mock_client = httpx.Client(
         base_url="https://example.supabase.co/rest/v1/",
         transport=httpx.MockTransport(handle_request),
@@ -142,8 +198,12 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
         base_url="https://example.supabase.co/auth/v1/",
         transport=httpx.MockTransport(handle_auth_request),
     )
+    mock_arxiv_client = httpx.Client(
+        base_url="https://export.arxiv.org/api/",
+        transport=httpx.MockTransport(handle_arxiv_request),
+    )
     monkeypatch.setattr(
-        paper_service,
+        paper_repository,
         "get_supabase_client",
         lambda: mock_client,
     )
@@ -152,11 +212,17 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
         "get_supabase_auth_client",
         lambda: mock_auth_client,
     )
+    monkeypatch.setattr(
+        arxiv_client,
+        "get_arxiv_client",
+        lambda: mock_arxiv_client,
+    )
 
     yield storage
 
     mock_client.close()
     mock_auth_client.close()
+    mock_arxiv_client.close()
 
 
 def test_list_papers_returns_empty_list() -> None:
@@ -215,6 +281,43 @@ def test_get_paper_returns_404_when_not_found() -> None:
 
 def test_create_paper_rejects_blank_title() -> None:
     response = client.post("/papers", json={"title": "   "})
+
+    assert response.status_code == 422
+
+
+def test_import_arxiv_papers() -> None:
+    response = client.post(
+        "/papers/import/arxiv",
+        json={
+            "search_query": "cat:cs.SE",
+            "max_results": 1,
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["imported_count"] == 1
+    assert len(data["papers"]) == 1
+    paper = data["papers"][0]
+    assert paper["title"] == "Retrieval-Augmented Backend APIs"
+    assert paper["abstract"] == (
+        "This paper studies retrieval-augmented backend API design."
+    )
+    assert paper["source_url"] == "https://arxiv.org/abs/2501.01234v1"
+    assert paper["arxiv_id"] == "2501.01234"
+    assert paper["doi"] == "10.0000/example"
+    assert paper["authors"] == ["Alice Example", "Bob Example"]
+    assert paper["published_at"] == "2025-01-02T00:00:00Z"
+
+
+def test_import_arxiv_papers_rejects_too_large_max_results() -> None:
+    response = client.post(
+        "/papers/import/arxiv",
+        json={
+            "search_query": "cat:cs.SE",
+            "max_results": 51,
+        },
+    )
 
     assert response.status_code == 422
 

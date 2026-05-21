@@ -39,6 +39,18 @@ class PaperResponse(PaperBase):
     updated_at: datetime
 
 
+class ArxivImportRequest(BaseModel):
+    # arXiv APIから論文を取り込むときの入力形式です。
+    search_query: str = Field("cat:cs.AI", min_length=1, max_length=200)
+    max_results: int = Field(10, ge=1, le=50)
+
+
+class ArxivImportResponse(BaseModel):
+    # arXiv APIから取り込んだ論文の結果です。
+    imported_count: int
+    papers: list[PaperResponse]
+
+
 class PaperActionCreate(BaseModel):
     # ユーザーが論文に対して行う判定です。
     action: PaperActionType
