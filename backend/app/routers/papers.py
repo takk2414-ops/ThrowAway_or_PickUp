@@ -11,8 +11,13 @@ from app.schemas.paper import (
     PaperActionResponse,
     PaperCreate,
     PaperResponse,
+    RelatedSignalCreate,
+    RelatedSignalDiscoveryResponse,
+    RelatedSignalResponse,
+    RisingImportRequest,
+    RisingImportResponse,
 )
-from app.services import auth_service, paper_service
+from app.services import auth_service, paper_service, rising_service
 
 # 論文に関するAPIをまとめるrouterです。
 router = APIRouter(prefix="/papers", tags=["papers"])
@@ -130,6 +135,22 @@ def import_arxiv_papers(
 
 
 @router.post(
+    "/import/rising",
+    response_model=RisingImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def import_rising_papers(
+    import_request: RisingImportRequest,
+) -> RisingImportResponse:
+    try:
+        return rising_service.import_rising_papers(import_request)
+    except rising_service.RisingImportError as error:
+        _raise_import_http_error(error)
+    except (SupabaseConfigError, paper_service.PaperStorageError) as error:
+        _raise_storage_http_error(error)
+
+
+@router.post(
     "/{paper_id}/actions",
     response_model=PaperActionResponse,
     status_code=status.HTTP_201_CREATED,
@@ -154,3 +175,67 @@ def create_paper_action(
             detail="Paper not found",
         )
     return action
+
+
+@router.get(
+    "/{paper_id}/related-signals",
+    response_model=list[RelatedSignalResponse],
+)
+def list_related_signals(paper_id: UUID) -> list[RelatedSignalResponse]:
+    try:
+        signals = paper_service.list_related_signals(paper_id)
+    except (SupabaseConfigError, paper_service.PaperStorageError) as error:
+        _raise_storage_http_error(error)
+
+    if signals is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Paper not found",
+        )
+    return signals
+
+
+@router.post(
+    "/{paper_id}/related-signals",
+    response_model=RelatedSignalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_related_signal(
+    paper_id: UUID,
+    related_signal_create: RelatedSignalCreate,
+) -> RelatedSignalResponse:
+    try:
+        signal = paper_service.create_related_signal(
+            paper_id,
+            related_signal_create,
+        )
+    except (SupabaseConfigError, paper_service.PaperStorageError) as error:
+        _raise_storage_http_error(error)
+
+    if signal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Paper not found",
+        )
+    return signal
+
+
+@router.post(
+    "/{paper_id}/related-signals/discover",
+    response_model=RelatedSignalDiscoveryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def discover_related_signals(
+    paper_id: UUID,
+) -> RelatedSignalDiscoveryResponse:
+    try:
+        discovery = paper_service.discover_related_signals(paper_id)
+    except (SupabaseConfigError, paper_service.PaperStorageError) as error:
+        _raise_storage_http_error(error)
+
+    if discovery is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Paper not found",
+        )
+    return discovery

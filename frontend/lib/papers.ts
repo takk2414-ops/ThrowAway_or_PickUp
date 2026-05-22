@@ -13,9 +13,38 @@ export type Paper = {
 
 export type PaperAction = "pickup" | "save" | "skip";
 
+export type RelatedSignalSourceType =
+  | "github"
+  | "qiita"
+  | "hacker_news"
+  | "reddit"
+  | "x"
+  | "hugging_face"
+  | "blog"
+  | "other";
+
+export type RelatedSignal = {
+  id: string;
+  paper_id: string;
+  source_type: RelatedSignalSourceType;
+  title: string;
+  source_url: string;
+  summary: string | null;
+  published_at: string | null;
+  raw_metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
 type ArxivImportResponse = {
   imported_count: number;
   papers: Paper[];
+};
+
+type RelatedSignalDiscoveryResponse = {
+  discovered_count: number;
+  signals: RelatedSignal[];
+  source_errors: string[];
 };
 
 export const API_BASE_URL =
@@ -49,7 +78,7 @@ export async function createPaperAction(
   }
 }
 
-export async function importArxivPapers(): Promise<Paper[]> {
+export async function importNewPapers(): Promise<Paper[]> {
   const response = await fetch(`${API_BASE_URL}/papers/import/arxiv`, {
     method: "POST",
     headers: {
@@ -67,4 +96,32 @@ export async function importArxivPapers(): Promise<Paper[]> {
 
   const data = (await response.json()) as ArxivImportResponse;
   return data.papers;
+}
+
+export async function fetchRelatedSignals(paperId: string): Promise<RelatedSignal[]> {
+  const response = await fetch(`${API_BASE_URL}/papers/${paperId}/related-signals`);
+  if (!response.ok) {
+    throw new Error(`GET /papers/${paperId}/related-signals failed: ${response.status}`);
+  }
+
+  return (await response.json()) as RelatedSignal[];
+}
+
+export async function discoverRelatedSignals(
+  paperId: string,
+): Promise<RelatedSignalDiscoveryResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/papers/${paperId}/related-signals/discover`,
+    {
+      method: "POST",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `POST /papers/${paperId}/related-signals/discover failed: ${response.status}`,
+    );
+  }
+
+  return (await response.json()) as RelatedSignalDiscoveryResponse;
 }

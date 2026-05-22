@@ -11,7 +11,11 @@ from app.schemas.paper import (
     PaperActionResponse,
     PaperCreate,
     PaperResponse,
+    RelatedSignalCreate,
+    RelatedSignalDiscoveryResponse,
+    RelatedSignalResponse,
 )
+from app.services import signal_discovery_service
 
 
 PaperStorageError = paper_repository.PaperRepositoryError
@@ -56,6 +60,40 @@ def create_paper_action(
         paper_id,
         paper_action_create,
         user_id,
+    )
+
+
+def list_related_signals(paper_id: UUID) -> list[RelatedSignalResponse] | None:
+    if paper_repository.get_paper(paper_id) is None:
+        return None
+
+    return paper_repository.list_related_signals(paper_id)
+
+
+def create_related_signal(
+    paper_id: UUID,
+    related_signal_create: RelatedSignalCreate,
+) -> RelatedSignalResponse | None:
+    if paper_repository.get_paper(paper_id) is None:
+        return None
+
+    return paper_repository.create_related_signal(
+        paper_id,
+        related_signal_create,
+    )
+
+
+def discover_related_signals(
+    paper_id: UUID,
+    max_results_per_source: int = 3,
+) -> RelatedSignalDiscoveryResponse | None:
+    paper = paper_repository.get_paper(paper_id)
+    if paper is None:
+        return None
+
+    return signal_discovery_service.discover_and_save_related_signals(
+        paper,
+        max_results_per_source,
     )
 
 

@@ -58,6 +58,51 @@ create table if not exists daily_paper_items (
   unique (target_date, paper_id)
 );
 
+-- 論文に紐づく周辺情報を保存するテーブルです。
+-- GitHub実装、Qiita記事、Hacker Newsの反応など、
+-- 論文以外の技術シグナルを扱います。
+create table if not exists related_signals (
+  id uuid primary key default gen_random_uuid(),
+
+  -- 関連先の論文です。論文が削除されたら周辺情報も削除します。
+  paper_id uuid not null references papers(id) on delete cascade,
+
+  -- 情報源の種類です。
+  source_type text not null check (
+    source_type in (
+      'github',
+      'qiita',
+      'hacker_news',
+      'reddit',
+      'x',
+      'hugging_face',
+      'blog',
+      'other'
+    )
+  ),
+
+  -- 周辺情報のタイトルです。
+  title text not null,
+
+  -- GitHub repository、記事、投稿などのURLです。
+  source_url text not null,
+
+  -- 判断材料として画面に出せる短い説明です。
+  summary text,
+
+  -- 情報源側で公開された日時です。
+  published_at timestamptz,
+
+  -- APIレスポンスなど、今後必要になる生メタデータを保存できます。
+  raw_metadata jsonb not null default '{}'::jsonb,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- 同じ論文に対して同じURLを重複保存しないようにします。
+  unique (paper_id, source_url)
+);
+
 -- ユーザーが論文に対して行った操作履歴を保存するテーブルです。
 -- pickup / save / skip を履歴として残します。
 create table if not exists user_paper_actions (
@@ -90,6 +135,15 @@ create index if not exists idx_daily_paper_items_target_date
 
 create index if not exists idx_daily_paper_items_paper_id
   on daily_paper_items (paper_id);
+
+create index if not exists idx_related_signals_paper_id
+  on related_signals (paper_id);
+
+create index if not exists idx_related_signals_source_type
+  on related_signals (source_type);
+
+create index if not exists idx_related_signals_published_at
+  on related_signals (published_at desc);
 
 create index if not exists idx_user_paper_actions_paper_id
   on user_paper_actions (paper_id);

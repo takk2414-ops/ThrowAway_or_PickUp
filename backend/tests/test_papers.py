@@ -13,9 +13,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.clients import arxiv as arxiv_client
+from app.clients import github as github_client
+from app.clients import qiita as qiita_client
 from app.main import app
 from app.repositories import paper_repository
+from app.schemas.paper import (
+    PaperCreate,
+    PaperResponse,
+    RelatedSignalDiscoveryResponse,
+    RelatedSignalResponse,
+    RelatedSignalSourceType,
+)
 from app.services import auth_service
+from app.services import rising_service
 from app.services.paper_service import list_paper_actions
 
 
@@ -29,6 +39,7 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
     storage: dict[str, dict | list] = {
         "papers": {},
         "actions": [],
+        "related_signals": [],
     }
 
     def now_iso() -> str:
@@ -91,6 +102,21 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
             "created_at": now_iso(),
         }
 
+    def build_related_signal_row(payload: dict) -> dict:
+        now = now_iso()
+        return {
+            "id": str(uuid4()),
+            "paper_id": payload["paper_id"],
+            "source_type": payload["source_type"],
+            "title": payload["title"],
+            "source_url": payload["source_url"],
+            "summary": payload.get("summary"),
+            "published_at": payload.get("published_at"),
+            "raw_metadata": payload.get("raw_metadata", {}),
+            "created_at": now,
+            "updated_at": now,
+        }
+
     def handle_papers_request(request: httpx.Request) -> httpx.Response:
         papers = storage["papers"]
         if not isinstance(papers, dict):
@@ -145,11 +171,37 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
 
         return httpx.Response(405, json={"message": "method not allowed"})
 
+    def handle_related_signals_request(request: httpx.Request) -> httpx.Response:
+        related_signals = storage["related_signals"]
+        if not isinstance(related_signals, list):
+            raise AssertionError("related_signals storage must be a list")
+
+        if request.method == "GET":
+            paper_id_filter = request.url.params.get("paper_id")
+            rows = related_signals
+            if paper_id_filter and paper_id_filter.startswith("eq."):
+                paper_id = paper_id_filter.removeprefix("eq.")
+                rows = [
+                    signal
+                    for signal in rows
+                    if signal["paper_id"] == paper_id
+                ]
+            return httpx.Response(200, json=rows)
+
+        if request.method == "POST":
+            row = build_related_signal_row(read_json(request))
+            related_signals.append(row)
+            return httpx.Response(201, json=[row])
+
+        return httpx.Response(405, json={"message": "method not allowed"})
+
     def handle_request(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/rest/v1/papers":
             return handle_papers_request(request)
         if request.url.path == "/rest/v1/user_paper_actions":
             return handle_actions_request(request)
+        if request.url.path == "/rest/v1/related_signals":
+            return handle_related_signals_request(request)
         return httpx.Response(404, json={"message": "not found"})
 
     def handle_auth_request(request: httpx.Request) -> httpx.Response:
@@ -190,6 +242,60 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
         """
         return httpx.Response(200, text=xml)
 
+    def handle_github_request(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/search/repositories":
+            return httpx.Response(404, json={"message": "not found"})
+
+        query = request.url.params.get("q", "")
+        if query != "2501.01234":
+            return httpx.Response(
+                200,
+                json={"total_count": 0, "incomplete_results": False, "items": []},
+            )
+
+        return httpx.Response(
+            200,
+            json={
+                "total_count": 1,
+                "incomplete_results": False,
+                "items": [
+                    {
+                        "full_name": "example/paper-implementation",
+                        "html_url": "https://github.com/example/paper-implementation",
+                        "description": "Implementation for the paper.",
+                        "created_at": "2025-01-03T00:00:00Z",
+                        "updated_at": "2025-01-04T00:00:00Z",
+                        "stargazers_count": 42,
+                        "forks_count": 3,
+                        "language": "Python",
+                    }
+                ],
+            },
+        )
+
+    def handle_qiita_request(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/api/v2/items":
+            return httpx.Response(404, json={"message": "not found"})
+
+        query = request.url.params.get("query", "")
+        if query != "2501.01234":
+            return httpx.Response(200, json=[])
+
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "title": "Paper implementation note",
+                    "url": "https://qiita.com/example/items/paper",
+                    "created_at": "2025-01-05T00:00:00Z",
+                    "likes_count": 5,
+                    "stocks_count": 2,
+                    "user": {"id": "example"},
+                    "tags": [{"name": "AI"}],
+                }
+            ],
+        )
+
     mock_client = httpx.Client(
         base_url="https://example.supabase.co/rest/v1/",
         transport=httpx.MockTransport(handle_request),
@@ -201,6 +307,14 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
     mock_arxiv_client = httpx.Client(
         base_url="https://export.arxiv.org/api/",
         transport=httpx.MockTransport(handle_arxiv_request),
+    )
+    mock_github_client = httpx.Client(
+        base_url="https://api.github.com/",
+        transport=httpx.MockTransport(handle_github_request),
+    )
+    mock_qiita_client = httpx.Client(
+        base_url="https://qiita.com/api/v2/",
+        transport=httpx.MockTransport(handle_qiita_request),
     )
     monkeypatch.setattr(
         paper_repository,
@@ -217,12 +331,24 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
         "get_arxiv_client",
         lambda: mock_arxiv_client,
     )
+    monkeypatch.setattr(
+        github_client,
+        "get_github_client",
+        lambda: mock_github_client,
+    )
+    monkeypatch.setattr(
+        qiita_client,
+        "get_qiita_client",
+        lambda: mock_qiita_client,
+    )
 
     yield storage
 
     mock_client.close()
     mock_auth_client.close()
     mock_arxiv_client.close()
+    mock_github_client.close()
+    mock_qiita_client.close()
 
 
 def test_list_papers_returns_empty_list() -> None:
@@ -322,6 +448,137 @@ def test_import_arxiv_papers_rejects_too_large_max_results() -> None:
     assert response.status_code == 422
 
 
+def test_import_rising_papers() -> None:
+    response = client.post(
+        "/papers/import/rising",
+        json={
+            "categories": ["cs.SE"],
+            "max_results_per_category": 1,
+            "max_papers": 10,
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["imported_count"] == 1
+    assert len(data["papers"]) == 1
+    assert data["papers"][0]["arxiv_id"] == "2501.01234"
+    assert data["signal_counts"][data["papers"][0]["id"]] == 2
+    assert data["source_errors"] == []
+
+
+def test_build_rising_search_query_uses_14_to_60_day_range() -> None:
+    query = rising_service.build_rising_search_query(
+        category="cs.AI",
+        min_days_old=14,
+        max_days_old=60,
+        now=datetime(2026, 5, 22, tzinfo=UTC),
+    )
+
+    assert query == (
+        "cat:cs.AI "
+        "AND submittedDate:[202603230000 TO 202605082359]"
+    )
+
+
+def test_import_rising_papers_requires_github_and_article(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arxiv_queries: list[str] = []
+
+    def fetch_papers_for_test(search_query: str, max_results: int) -> list[PaperCreate]:
+        arxiv_queries.append(search_query)
+        return [
+            PaperCreate(title="GitHub only", arxiv_id="github-only"),
+            PaperCreate(title="Article only", arxiv_id="article-only"),
+            PaperCreate(title="Both sources", arxiv_id="both-sources"),
+        ]
+
+    monkeypatch.setattr(
+        arxiv_client,
+        "fetch_papers",
+        fetch_papers_for_test,
+    )
+
+    def discover_for_test(
+        paper: PaperResponse,
+        max_results_per_source: int = 3,
+    ) -> RelatedSignalDiscoveryResponse:
+        now = datetime.now(UTC)
+        source_types_by_arxiv_id: dict[str, list[RelatedSignalSourceType]] = {
+            "github-only": ["github"],
+            "article-only": ["qiita"],
+            "both-sources": ["github", "qiita"],
+        }
+        signals = [
+            RelatedSignalResponse(
+                id=uuid4(),
+                paper_id=paper.id,
+                source_type=source_type,
+                title=f"{paper.title} {source_type}",
+                source_url=f"https://example.com/{paper.arxiv_id}/{source_type}",
+                created_at=now,
+                updated_at=now,
+            )
+            for source_type in source_types_by_arxiv_id.get(paper.arxiv_id, [])
+        ]
+        return RelatedSignalDiscoveryResponse(
+            discovered_count=len(signals),
+            signals=signals,
+            source_errors=[],
+        )
+
+    monkeypatch.setattr(
+        rising_service.signal_discovery_service,
+        "discover_and_save_related_signals",
+        discover_for_test,
+    )
+
+    response = client.post(
+        "/papers/import/rising",
+        json={
+            "categories": ["cs.SE"],
+            "max_results_per_category": 3,
+            "max_papers": 10,
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(arxiv_queries) == 1
+    assert arxiv_queries[0].startswith("cat:cs.SE AND submittedDate:[")
+    assert data["imported_count"] == 1
+    assert [paper["arxiv_id"] for paper in data["papers"]] == ["both-sources"]
+
+
+def test_import_rising_papers_rejects_invalid_day_range() -> None:
+    response = client.post(
+        "/papers/import/rising",
+        json={
+            "categories": ["cs.SE"],
+            "max_results_per_category": 5,
+            "max_papers": 10,
+            "min_days_old": 60,
+            "max_days_old": 14,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_import_rising_papers_rejects_too_many_categories_results() -> None:
+    response = client.post(
+        "/papers/import/rising",
+        json={
+            "categories": ["cs.SE"],
+            "max_results_per_category": 21,
+            "max_papers": 10,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_create_paper_action() -> None:
     create_response = client.post(
         "/papers",
@@ -395,6 +652,173 @@ def test_create_paper_action_rejects_invalid_action() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_create_related_signal() -> None:
+    create_response = client.post(
+        "/papers",
+        json={"title": "A paper for related signal API"},
+    )
+    paper_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/papers/{paper_id}/related-signals",
+        json={
+            "source_type": "github",
+            "title": "Example implementation",
+            "source_url": "https://github.com/example/paper-implementation",
+            "summary": "Unofficial implementation repository.",
+            "raw_metadata": {"stars": 42},
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["id"]
+    assert data["paper_id"] == paper_id
+    assert data["source_type"] == "github"
+    assert data["title"] == "Example implementation"
+    assert data["source_url"] == "https://github.com/example/paper-implementation"
+    assert data["summary"] == "Unofficial implementation repository."
+    assert data["raw_metadata"] == {"stars": 42}
+    assert data["created_at"]
+    assert data["updated_at"]
+
+
+def test_list_related_signals() -> None:
+    create_response = client.post(
+        "/papers",
+        json={"title": "A paper with related signals"},
+    )
+    paper_id = create_response.json()["id"]
+
+    first_response = client.post(
+        f"/papers/{paper_id}/related-signals",
+        json={
+            "source_type": "github",
+            "title": "Implementation repository",
+            "source_url": "https://github.com/example/paper",
+        },
+    )
+    second_response = client.post(
+        f"/papers/{paper_id}/related-signals",
+        json={
+            "source_type": "qiita",
+            "title": "Implementation note",
+            "source_url": "https://qiita.com/example/items/paper",
+        },
+    )
+
+    response = client.get(f"/papers/{paper_id}/related-signals")
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["source_type"] == "github"
+    assert data[1]["source_type"] == "qiita"
+
+
+def test_create_related_signal_returns_404_when_paper_not_found() -> None:
+    response = client.post(
+        f"/papers/{uuid4()}/related-signals",
+        json={
+            "source_type": "github",
+            "title": "Missing paper implementation",
+            "source_url": "https://github.com/example/missing-paper",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Paper not found"}
+
+
+def test_create_related_signal_rejects_invalid_source_type() -> None:
+    create_response = client.post(
+        "/papers",
+        json={"title": "A paper for invalid related signal"},
+    )
+    paper_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/papers/{paper_id}/related-signals",
+        json={
+            "source_type": "mastodon",
+            "title": "Invalid source type",
+            "source_url": "https://example.com/invalid",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_discover_related_signals() -> None:
+    create_response = client.post(
+        "/papers",
+        json={
+            "title": "Retrieval-Augmented Backend APIs",
+            "arxiv_id": "2501.01234",
+        },
+    )
+    paper_id = create_response.json()["id"]
+
+    response = client.post(f"/papers/{paper_id}/related-signals/discover")
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["discovered_count"] == 2
+    assert data["source_errors"] == []
+    source_types = [
+        signal["source_type"]
+        for signal in data["signals"]
+    ]
+    assert source_types == ["github", "qiita"]
+
+    list_response = client.get(f"/papers/{paper_id}/related-signals")
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 2
+
+
+def test_discover_related_signals_reports_source_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_github_error(query: str, max_results: int):
+        raise github_client.GitHubClientError("GitHub search request failed")
+
+    monkeypatch.setattr(
+        github_client,
+        "search_repositories",
+        raise_github_error,
+    )
+
+    create_response = client.post(
+        "/papers",
+        json={
+            "title": "Retrieval-Augmented Backend APIs",
+            "arxiv_id": "2501.01234",
+        },
+    )
+    paper_id = create_response.json()["id"]
+
+    response = client.post(f"/papers/{paper_id}/related-signals/discover")
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["source_errors"] == ["github"]
+    assert data["discovered_count"] == 1
+    source_types = [
+        signal["source_type"]
+        for signal in data["signals"]
+    ]
+    assert source_types == ["qiita"]
+
+
+def test_discover_related_signals_returns_404_when_paper_not_found() -> None:
+    response = client.post(f"/papers/{uuid4()}/related-signals/discover")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Paper not found"}
 
 
 def test_create_paper_action_returns_404_when_paper_not_found() -> None:

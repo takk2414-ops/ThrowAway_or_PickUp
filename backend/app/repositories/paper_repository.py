@@ -10,6 +10,8 @@ from app.schemas.paper import (
     PaperActionResponse,
     PaperCreate,
     PaperResponse,
+    RelatedSignalCreate,
+    RelatedSignalResponse,
 )
 
 
@@ -145,6 +147,40 @@ def create_paper_action(
         headers={"Prefer": "return=representation"},
     )
     return PaperActionResponse.model_validate(_read_single_row(response))
+
+
+def list_related_signals(paper_id: UUID) -> list[RelatedSignalResponse]:
+    response = _request_supabase(
+        "GET",
+        "related_signals",
+        params={
+            "select": "*",
+            "paper_id": f"eq.{paper_id}",
+            "order": "published_at.desc.nullslast,created_at.desc",
+        },
+    )
+    return [
+        RelatedSignalResponse.model_validate(row)
+        for row in _read_rows(response)
+    ]
+
+
+def create_related_signal(
+    paper_id: UUID,
+    related_signal_create: RelatedSignalCreate,
+) -> RelatedSignalResponse:
+    payload = {
+        "paper_id": str(paper_id),
+        **related_signal_create.model_dump(mode="json"),
+    }
+    response = _request_supabase(
+        "POST",
+        "related_signals",
+        json=payload,
+        params={"on_conflict": "paper_id,source_url"},
+        headers={"Prefer": "return=representation,resolution=merge-duplicates"},
+    )
+    return RelatedSignalResponse.model_validate(_read_single_row(response))
 
 
 def list_paper_actions(paper_id: UUID) -> list[PaperActionResponse]:
