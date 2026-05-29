@@ -11,6 +11,7 @@ def test_settings_reads_environment_variables(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_ANON_KEY", "example-anon-key")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "example-service-role-key")
     monkeypatch.setenv("DAILY_PAPER_LIMIT", "30")
 
     settings = Settings(_env_file=None)
@@ -18,6 +19,7 @@ def test_settings_reads_environment_variables(monkeypatch) -> None:
     assert settings.app_env == "test"
     assert settings.supabase_url == "https://example.supabase.co"
     assert settings.supabase_anon_key == "example-anon-key"
+    assert settings.supabase_service_role_key == "example-service-role-key"
     assert settings.daily_paper_limit == 30
 
 
@@ -26,6 +28,7 @@ def test_settings_uses_default_values(monkeypatch) -> None:
     monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
     monkeypatch.delenv("DAILY_PAPER_LIMIT", raising=False)
 
     settings = Settings(_env_file=None)
@@ -33,4 +36,5 @@ def test_settings_uses_default_values(monkeypatch) -> None:
     assert settings.app_env == "local"
     assert settings.supabase_url == ""
     assert settings.supabase_anon_key == ""
+    assert settings.supabase_service_role_key == ""
     assert settings.daily_paper_limit == 20

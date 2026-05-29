@@ -1,5 +1,4 @@
-import type { Paper, RelatedSignal } from "../../lib/papers";
-import type { SortKey } from "./types";
+import type { RelatedSignal } from "../../lib/papers";
 
 export type SignalCounts = {
   articleCount: number;
@@ -9,20 +8,8 @@ export type SignalCounts = {
   totalCount: number;
 };
 
-export const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
-  { key: "new", label: "New" },
-  { key: "github", label: "GitHub" },
-  { key: "articles", label: "Articles" },
-  { key: "signals", label: "Signals" },
-];
-
 function readNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function getPaperTimestamp(paper: Paper): number {
-  const timestamp = Date.parse(paper.published_at ?? paper.created_at);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 export function countSignals(signals: RelatedSignal[]): SignalCounts {
@@ -62,44 +49,4 @@ export function countSignals(signals: RelatedSignal[]): SignalCounts {
       totalCount: 0,
     },
   );
-}
-
-export function sortPapers(
-  papers: Paper[],
-  relatedSignals: Record<string, RelatedSignal[]>,
-  sortKey: SortKey,
-): Paper[] {
-  return [...papers].sort((leftPaper, rightPaper) => {
-    const leftCounts = countSignals(relatedSignals[leftPaper.id] ?? []);
-    const rightCounts = countSignals(relatedSignals[rightPaper.id] ?? []);
-    const leftTimestamp = getPaperTimestamp(leftPaper);
-    const rightTimestamp = getPaperTimestamp(rightPaper);
-
-    if (sortKey === "github") {
-      return (
-        rightCounts.githubCount - leftCounts.githubCount
-        || rightCounts.githubScore - leftCounts.githubScore
-        || rightTimestamp - leftTimestamp
-      );
-    }
-
-    if (sortKey === "articles") {
-      return (
-        rightCounts.articleCount - leftCounts.articleCount
-        || rightCounts.articleScore - leftCounts.articleScore
-        || rightTimestamp - leftTimestamp
-      );
-    }
-
-    if (sortKey === "signals") {
-      return (
-        rightCounts.totalCount - leftCounts.totalCount
-        || rightCounts.githubCount - leftCounts.githubCount
-        || rightCounts.articleCount - leftCounts.articleCount
-        || rightTimestamp - leftTimestamp
-      );
-    }
-
-    return rightTimestamp - leftTimestamp;
-  });
 }

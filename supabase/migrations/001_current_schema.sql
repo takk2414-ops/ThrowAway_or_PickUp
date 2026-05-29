@@ -1,0 +1,3 @@
+-- 現在の開発用schema全体は supabase/schema.sql に集約しています。
+-- Supabase SQL Editorでは、schema.sql全体を貼り付けて実行してください。
+-- このファイルはmigrationsディレクトリの開始点を示すためのno-opです。

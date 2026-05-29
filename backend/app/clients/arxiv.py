@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 
 import httpx
 
-from app.schemas.paper import PaperCreate
+from app.schemas.papers import PaperCreate
 
 
 ARXIV_API_BASE_URL = "https://export.arxiv.org/api/"
@@ -79,18 +79,7 @@ def _parse_entry(entry: ElementTree.Element) -> PaperCreate:
     )
 
 
-def fetch_papers(
-    search_query: str,
-    max_results: int,
-) -> list[PaperCreate]:
-    params = {
-        "search_query": search_query,
-        "start": "0",
-        "max_results": str(max_results),
-        "sortBy": "submittedDate",
-        "sortOrder": "descending",
-    }
-
+def _fetch_papers_with_params(params: dict[str, str]) -> list[PaperCreate]:
     last_error: httpx.HTTPError | None = None
     for _ in range(2):
         try:
@@ -111,3 +100,30 @@ def fetch_papers(
         _parse_entry(entry)
         for entry in root.findall(f"{ATOM_NS}entry")
     ]
+
+
+def fetch_papers(
+    search_query: str,
+    max_results: int,
+) -> list[PaperCreate]:
+    return _fetch_papers_with_params(
+        {
+            "search_query": search_query,
+            "start": "0",
+            "max_results": str(max_results),
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+        }
+    )
+
+
+def fetch_papers_by_ids(arxiv_ids: list[str]) -> list[PaperCreate]:
+    if not arxiv_ids:
+        return []
+
+    return _fetch_papers_with_params(
+        {
+            "id_list": ",".join(arxiv_ids),
+            "max_results": str(len(arxiv_ids)),
+        }
+    )

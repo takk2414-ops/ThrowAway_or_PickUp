@@ -1,7 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import health, papers
+from app.routers import (
+    health,
+    paper_actions,
+    paper_analyses,
+    paper_exports,
+    paper_imports,
+    paper_signals,
+    papers,
+)
 
 
 def create_app() -> FastAPI:
@@ -26,6 +34,12 @@ def create_app() -> FastAPI:
 
     # /health や /papers のようなAPIルートをアプリに登録します。
     app.include_router(health.router)
+    app.include_router(paper_imports.router)
+    app.include_router(paper_exports.router)
+    app.include_router(paper_actions.router)
+    app.include_router(paper_signals.router)
+    app.include_router(paper_analyses.router)
+    # /papers/{paper_id} を含むため、固定パス系routerより後に登録します。
     app.include_router(papers.router)
     return app
 

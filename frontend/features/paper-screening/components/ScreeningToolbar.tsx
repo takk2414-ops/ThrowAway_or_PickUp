@@ -1,61 +1,77 @@
-import { SORT_OPTIONS } from "../sortPapers";
-import type { SortKey } from "../types";
+import type { PaperViewMode } from "../types";
 
 type ScreeningToolbarProps = {
-  isDiscoveringSignals: boolean;
-  isImportingNew: boolean;
+  canExportPicked: boolean;
+  isExportingPicked: boolean;
   isLoadingSignals: boolean;
-  onDiscoverSignals: () => void;
-  onImportNew: () => void;
-  onSortChange: (sortKey: SortKey) => void;
-  sortKey: SortKey;
+  onCopyNotebookPrompt: () => void;
+  onCopyPickedPdfUrls: () => void;
+  onDownloadPickedMarkdown: () => void;
+  onDownloadPickedPdfZip: () => void;
+  onLoadPicked: () => void;
+  viewMode: PaperViewMode;
 };
 
 export function ScreeningToolbar({
-  isDiscoveringSignals,
-  isImportingNew,
+  canExportPicked,
+  isExportingPicked,
   isLoadingSignals,
-  onDiscoverSignals,
-  onImportNew,
-  onSortChange,
-  sortKey,
+  onCopyNotebookPrompt,
+  onCopyPickedPdfUrls,
+  onDownloadPickedMarkdown,
+  onDownloadPickedPdfZip,
+  onLoadPicked,
+  viewMode,
 }: ScreeningToolbarProps) {
-  const isBusy = isDiscoveringSignals || isImportingNew || isLoadingSignals;
+  const exportDisabled = !canExportPicked || isExportingPicked;
 
   return (
     <section className="screening-toolbar" aria-label="論文表示操作">
-      <div className="sort-controls" role="tablist" aria-label="並び替え">
-        {SORT_OPTIONS.map((option) => (
-          <button
-            aria-selected={sortKey === option.key}
-            className={sortKey === option.key ? "sort-button active" : "sort-button"}
-            onClick={() => onSortChange(option.key)}
-            role="tab"
-            type="button"
-            key={option.key}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
       <div className="toolbar-actions">
         <button
-          className="secondary-button"
-          disabled={isBusy}
-          onClick={onImportNew}
+          className={viewMode === "picked" ? "secondary-button active" : "secondary-button"}
+          disabled={isLoadingSignals}
+          onClick={onLoadPicked}
           type="button"
         >
-          {isImportingNew ? "Importing..." : "Import New"}
+          ピックアップ済み
         </button>
-        <button
-          className="secondary-button"
-          disabled={isBusy}
-          onClick={onDiscoverSignals}
-          type="button"
-        >
-          {isDiscoveringSignals ? "Discovering..." : "Discover Signals"}
-        </button>
+        {viewMode === "picked" && (
+          <>
+            <button
+              className="secondary-button"
+              disabled={exportDisabled}
+              onClick={onCopyPickedPdfUrls}
+              type="button"
+            >
+              PDF URLをコピー
+            </button>
+            <button
+              className="secondary-button"
+              disabled={exportDisabled}
+              onClick={onDownloadPickedMarkdown}
+              type="button"
+            >
+              Markdownノート
+            </button>
+            <button
+              className="secondary-button"
+              disabled={exportDisabled}
+              onClick={onDownloadPickedPdfZip}
+              type="button"
+            >
+              PDF ZIP
+            </button>
+            <button
+              className="secondary-button"
+              disabled={exportDisabled}
+              onClick={onCopyNotebookPrompt}
+              type="button"
+            >
+              NotebookLM質問
+            </button>
+          </>
+        )}
       </div>
     </section>
   );

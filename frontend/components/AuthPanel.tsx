@@ -45,7 +45,7 @@ export function AuthPanel({
             <p className="auth-email">{authSession.email ?? authSession.userId}</p>
           </div>
           <button className="secondary-button" onClick={onSignOut} type="button">
-            Logout
+            ログアウト
           </button>
         </div>
       ) : (
@@ -58,7 +58,7 @@ export function AuthPanel({
               role="tab"
               type="button"
             >
-              Login
+              ログイン
             </button>
             <button
               aria-selected={authMode === "signup"}
@@ -67,11 +67,11 @@ export function AuthPanel({
               role="tab"
               type="button"
             >
-              Sign up
+              新規登録
             </button>
           </div>
           <label>
-            Email
+            メールアドレス
             <input
               autoComplete="email"
               onChange={(event) => onEmailChange(event.target.value)}
@@ -81,7 +81,7 @@ export function AuthPanel({
             />
           </label>
           <label>
-            Password
+            パスワード
             <input
               autoComplete={authMode === "signin" ? "current-password" : "new-password"}
               minLength={6}
@@ -92,7 +92,7 @@ export function AuthPanel({
             />
           </label>
           <button className="primary-button" disabled={isAuthPending} type="submit">
-            {isAuthPending ? "Sending..." : authMode === "signin" ? "Login" : "Sign up"}
+            {isAuthPending ? "送信中..." : authMode === "signin" ? "ログイン" : "新規登録"}
           </button>
         </form>
       )}

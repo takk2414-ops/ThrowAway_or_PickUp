@@ -4,13 +4,12 @@ from datetime import UTC, datetime, timedelta
 
 from app.clients import arxiv
 from app.repositories import paper_repository
-from app.schemas.paper import (
-    PaperCreate,
-    PaperResponse,
-    RelatedSignalResponse,
+from app.schemas.imports import (
     RisingImportRequest,
     RisingImportResponse,
 )
+from app.schemas.papers import PaperCreate, PaperResponse
+from app.schemas.signals import RelatedSignalResponse
 from app.services import signal_discovery_service
 
 

@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import { AuthPanel } from "../components/AuthPanel";
 import type { AuthMode } from "../components/AuthPanel";
 import { PaperList } from "../features/paper-screening/components/PaperList";
 import { ScreeningToolbar } from "../features/paper-screening/components/ScreeningToolbar";
-import { sortPapers } from "../features/paper-screening/sortPapers";
+import {
+  copyTextToClipboard,
+  downloadBlobFile,
+  downloadTextFile,
+} from "../features/paper-screening/browserFiles";
+import {
+  buildErrorNotice,
+  type ErrorNotice,
+} from "../features/paper-screening/errorNotices";
 import type {
   ActionState,
+  PaperViewMode,
   PaperDecisionAction,
-  SortKey,
 } from "../features/paper-screening/types";
 import {
   clearStoredSession,
@@ -25,26 +33,37 @@ import type { AuthSession } from "../lib/supabaseAuth";
 import {
   API_BASE_URL,
   createPaperAction,
-  discoverRelatedSignals,
-  fetchPapers,
+  fetchPickedPapers,
+  fetchPickedPapersExport,
+  fetchPickedPapersPdfZip,
+  fetchPaperAIAnalysis,
   fetchRelatedSignals,
-  importNewPapers,
+  fetchTodayPapers,
+  generatePaperAIAnalysis,
 } from "../lib/papers";
-import type { Paper, RelatedSignal } from "../lib/papers";
+import type {
+  Paper,
+  PaperAIAnalysis,
+  PickedPapersExport,
+  RelatedSignal,
+} from "../lib/papers";
 
 export default function HomePage() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [decidedActions, setDecidedActions] = useState<Record<string, PaperDecisionAction>>({});
-  const [sortKey, setSortKey] = useState<SortKey>("new");
+  const [viewMode, setViewMode] = useState<PaperViewMode>("today");
   const [isLoading, setIsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorNotice, setErrorNotice] = useState<ErrorNotice | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
-  const [isImportingNew, setIsImportingNew] = useState(false);
   const [relatedSignals, setRelatedSignals] = useState<Record<string, RelatedSignal[]>>({});
-  const [sourceErrorsByPaper, setSourceErrorsByPaper] = useState<Record<string, string[]>>({});
+  const [paperAIAnalyses, setPaperAIAnalyses] = useState<
+    Record<string, PaperAIAnalysis | null>
+  >({});
   const [isLoadingSignals, setIsLoadingSignals] = useState(false);
-  const [isDiscoveringSignals, setIsDiscoveringSignals] = useState(false);
+  const [isExportingPicked, setIsExportingPicked] = useState(false);
+  const [pickedExport, setPickedExport] = useState<PickedPapersExport | null>(null);
+  const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [actionState, setActionState] = useState<ActionState>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("signin");
@@ -54,10 +73,7 @@ export default function HomePage() {
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthPending, setIsAuthPending] = useState(false);
-  const screeningPapers = useMemo(
-    () => sortPapers(papers, relatedSignals, sortKey).slice(0, 10),
-    [papers, relatedSignals, sortKey],
-  );
+  const screeningPapers = papers;
   const currentPaper = screeningPapers[currentIndex] ?? null;
 
   useEffect(() => {
@@ -65,14 +81,14 @@ export default function HomePage() {
 
     async function loadPapers(): Promise<void> {
       try {
-        const fetchedPapers = await fetchPapers();
+        const fetchedPapers = await fetchTodayPapers();
         setPapers(fetchedPapers);
         setCurrentIndex(0);
         setDecidedActions({});
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "論文一覧の取得に失敗しました";
-        setErrorMessage(message);
+        setErrorNotice(
+          buildErrorNotice(error, "論文一覧の取得に失敗しました", "today"),
+        );
       } finally {
         setIsLoading(false);
       }
@@ -117,6 +133,33 @@ export default function HomePage() {
     loadRelatedSignals();
   }, [currentPaper, relatedSignals]);
 
+  useEffect(() => {
+    if (currentPaper === null || currentPaper.id in paperAIAnalyses) {
+      return;
+    }
+
+    async function loadPaperAIAnalysis(): Promise<void> {
+      if (currentPaper === null) {
+        return;
+      }
+
+      try {
+        const analysis = await fetchPaperAIAnalysis(currentPaper.id);
+        setPaperAIAnalyses((currentAnalyses) => ({
+          ...currentAnalyses,
+          [currentPaper.id]: analysis,
+        }));
+      } catch {
+        setPaperAIAnalyses((currentAnalyses) => ({
+          ...currentAnalyses,
+          [currentPaper.id]: null,
+        }));
+      }
+    }
+
+    loadPaperAIAnalysis();
+  }, [currentPaper, paperAIAnalyses]);
+
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setAuthMessage(null);
@@ -160,60 +203,131 @@ export default function HomePage() {
     setAuthError(null);
   }
 
-  async function handleSortChange(nextSortKey: SortKey): Promise<void> {
-    setSortKey(nextSortKey);
-    setCurrentIndex(0);
-    setActionState(null);
-    setImportMessage(null);
-
-    if (nextSortKey === "new" || papers.length === 0) {
+  async function handleLoadPickedPapers(): Promise<void> {
+    if (!authSession) {
+      setImportMessage(null);
+      setErrorNotice(null);
+      setAuthError("ピックアップ済み論文を見るにはログインしてください");
       return;
     }
 
     setIsLoadingSignals(true);
+    setImportMessage(null);
+    setErrorNotice(null);
+    setAuthError(null);
+
     try {
-      await loadRelatedSignalsForPapers(papers);
+      const pickedPapers = await fetchPickedPapers(authSession.accessToken);
+      setPapers(pickedPapers);
+      setViewMode("picked");
+      setCurrentIndex(0);
+      setRelatedSignals({});
+      setPaperAIAnalyses({});
+      setPickedExport(null);
+      setImportMessage(`${pickedPapers.length}件のピックアップ済み論文を読み込みました`);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("failed: 401")) {
+        clearStoredSession();
+        setAuthSession(null);
+        setAuthError("ログインの有効期限が切れました。再ログインしてください。");
+      } else {
+        setErrorNotice(
+          buildErrorNotice(error, "ピックアップ済み論文の取得に失敗しました", "picked"),
+        );
+      }
     } finally {
       setIsLoadingSignals(false);
     }
   }
 
-  async function loadRelatedSignalsForPapers(nextPapers: Paper[]): Promise<void> {
-    const signalEntries = await Promise.all(
-      nextPapers.map(async (paper) => {
-        try {
-          return [paper.id, await fetchRelatedSignals(paper.id)] as const;
-        } catch {
-          return [paper.id, []] as const;
-        }
-      }),
-    );
-    setRelatedSignals((currentSignals) => ({
-      ...currentSignals,
-      ...Object.fromEntries(signalEntries),
-    }));
-  }
+  async function loadPickedExport(): Promise<PickedPapersExport | null> {
+    if (!authSession) {
+      setAuthError("ピックアップ済み論文をexportするにはログインしてください");
+      return null;
+    }
 
-  async function handleImportNewPapers(): Promise<void> {
-    setIsImportingNew(true);
+    if (pickedExport !== null) {
+      return pickedExport;
+    }
+
+    setIsExportingPicked(true);
+    setErrorNotice(null);
     setImportMessage(null);
-    setErrorMessage(null);
 
     try {
-      const importedPapers = await importNewPapers();
-      setPapers(importedPapers);
-      setSortKey("new");
-      setCurrentIndex(0);
-      setDecidedActions({});
-      setRelatedSignals({});
-      setSourceErrorsByPaper({});
-      setImportMessage(`${importedPapers.length}件の新着論文を取り込みました`);
+      const exportData = await fetchPickedPapersExport(authSession.accessToken);
+      setPickedExport(exportData);
+      return exportData;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "arXivからの論文取得に失敗しました";
-      setErrorMessage(message);
+      setErrorNotice(
+        buildErrorNotice(error, "ピックアップ済み論文のexportに失敗しました", "picked"),
+      );
+      return null;
     } finally {
-      setIsImportingNew(false);
+      setIsExportingPicked(false);
+    }
+  }
+
+  async function handleCopyPickedPdfUrls(): Promise<void> {
+    const exportData = await loadPickedExport();
+    if (exportData === null) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(exportData.pdf_urls.join("\n"));
+      setImportMessage(`${exportData.pdf_urls.length}件のPDF URLをコピーしました`);
+    } catch (error) {
+      setErrorNotice(buildErrorNotice(error, "PDF URLのコピーに失敗しました", "picked"));
+    }
+  }
+
+  async function handleDownloadPickedMarkdown(): Promise<void> {
+    const exportData = await loadPickedExport();
+    if (exportData === null) {
+      return;
+    }
+
+    downloadTextFile("picked-papers-notebooklm.md", exportData.markdown_note);
+    setImportMessage("NotebookLM用Markdownノートをダウンロードしました");
+  }
+
+  async function handleDownloadPickedPdfZip(): Promise<void> {
+    if (!authSession) {
+      setAuthError("PDF ZIPをダウンロードするにはログインしてください");
+      return;
+    }
+
+    setIsExportingPicked(true);
+    setErrorNotice(null);
+    setImportMessage(null);
+
+    try {
+      const zipBlob = await fetchPickedPapersPdfZip(authSession.accessToken);
+      downloadBlobFile("picked-papers-notebooklm.zip", zipBlob);
+      setImportMessage("PDF ZIPをダウンロードしました");
+    } catch (error) {
+      setErrorNotice(
+        buildErrorNotice(error, "PDF ZIPのダウンロードに失敗しました", "picked"),
+      );
+    } finally {
+      setIsExportingPicked(false);
+    }
+  }
+
+  async function handleCopyNotebookPrompt(): Promise<void> {
+    const exportData = await loadPickedExport();
+    if (exportData === null) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(exportData.notebooklm_prompt);
+      setImportMessage("NotebookLM用質問テンプレートをコピーしました");
+    } catch (error) {
+      setErrorNotice(
+        buildErrorNotice(error, "NotebookLM用質問テンプレートのコピーに失敗しました", "picked"),
+      );
     }
   }
 
@@ -244,104 +358,34 @@ export default function HomePage() {
       ));
       setActionState({
         paperId,
-        message: `${action} を保存しました`,
+        message: `${action === "pickup" ? "ピックアップ" : "スキップ"}を保存しました`,
         isError: false,
       });
     } catch (error) {
       if (error instanceof Error && error.message.includes("failed: 401")) {
         clearStoredSession();
         setAuthSession(null);
+        setAuthError("ログインの有効期限が切れました。再ログインしてください。");
         setActionState({
           paperId,
           message: "ログインの有効期限が切れました。再ログインしてください。",
           isError: true,
         });
       } else {
-        const message =
-          error instanceof Error ? error.message : "判定アクションの保存に失敗しました";
+        const notice = buildErrorNotice(
+          error,
+          "判定アクションの保存に失敗しました",
+          "action",
+        );
+        setErrorNotice(notice);
         setActionState({
           paperId,
-          message,
+          message: notice.title,
           isError: true,
         });
       }
     } finally {
       setPendingAction(null);
-    }
-  }
-
-  async function handleDiscoverSignalsForPaper(paperId: string): Promise<void> {
-    setIsDiscoveringSignals(true);
-    setErrorMessage(null);
-
-    try {
-      const discovery = await discoverRelatedSignals(paperId);
-      setRelatedSignals((currentSignals) => ({
-        ...currentSignals,
-        [paperId]: discovery.signals,
-      }));
-      setSourceErrorsByPaper((currentErrors) => ({
-        ...currentErrors,
-        [paperId]: discovery.source_errors,
-      }));
-      const errorMessage =
-        discovery.source_errors.length > 0
-          ? ` / API失敗: ${discovery.source_errors.join(", ")}`
-          : "";
-      setImportMessage(
-        `${discovery.discovered_count}件の関連シグナルを見つけました${errorMessage}`,
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "関連シグナルの探索に失敗しました";
-      setErrorMessage(message);
-    } finally {
-      setIsDiscoveringSignals(false);
-    }
-  }
-
-  async function handleDiscoverSignalsForVisiblePapers(): Promise<void> {
-    if (screeningPapers.length === 0) {
-      setImportMessage("探索対象の論文がありません");
-      return;
-    }
-
-    setIsDiscoveringSignals(true);
-    setErrorMessage(null);
-
-    let discoveredCount = 0;
-    const sourceErrorCounts: Record<string, number> = {};
-    try {
-      for (const paper of screeningPapers) {
-        const discovery = await discoverRelatedSignals(paper.id);
-        discoveredCount += discovery.discovered_count;
-        for (const sourceName of discovery.source_errors) {
-          sourceErrorCounts[sourceName] = (sourceErrorCounts[sourceName] ?? 0) + 1;
-        }
-        setRelatedSignals((currentSignals) => ({
-          ...currentSignals,
-          [paper.id]: discovery.signals,
-        }));
-        setSourceErrorsByPaper((currentErrors) => ({
-          ...currentErrors,
-          [paper.id]: discovery.source_errors,
-        }));
-      }
-      setCurrentIndex(0);
-      const errorSummary = Object.entries(sourceErrorCounts)
-        .map(([sourceName, count]) => `${sourceName}: ${count}件`)
-        .join(", ");
-      setImportMessage(
-        errorSummary
-          ? `表示中${screeningPapers.length}件から${discoveredCount}件の関連シグナルを見つけました / API失敗: ${errorSummary}`
-          : `表示中${screeningPapers.length}件から${discoveredCount}件の関連シグナルを見つけました`,
-      );
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "関連シグナルの探索に失敗しました";
-      setErrorMessage(message);
-    } finally {
-      setIsDiscoveringSignals(false);
     }
   }
 
@@ -355,11 +399,30 @@ export default function HomePage() {
     ));
   }
 
+  async function handleGeneratePaperAIAnalysis(paperId: string): Promise<void> {
+    setIsGeneratingAnalysis(true);
+    setErrorNotice(null);
+
+    try {
+      const analysis = await generatePaperAIAnalysis(paperId);
+      setPaperAIAnalyses((currentAnalyses) => ({
+        ...currentAnalyses,
+        [paperId]: analysis,
+      }));
+    } catch (error) {
+      setErrorNotice(
+        buildErrorNotice(error, "AI分析の生成に失敗しました", "analysis"),
+      );
+    } finally {
+      setIsGeneratingAnalysis(false);
+    }
+  }
+
   return (
     <main className="page-shell">
       <section className="page-header">
         <div>
-          <p className="eyebrow">Paper Screening</p>
+          <p className="eyebrow">論文スクリーニング</p>
           <h1>ThrowAway_or_PickUp</h1>
         </div>
         <div className="header-actions">
@@ -383,19 +446,29 @@ export default function HomePage() {
       />
 
       <ScreeningToolbar
-        isDiscoveringSignals={isDiscoveringSignals}
-        isImportingNew={isImportingNew}
+        canExportPicked={viewMode === "picked" && papers.length > 0}
+        isExportingPicked={isExportingPicked}
         isLoadingSignals={isLoadingSignals}
-        onDiscoverSignals={handleDiscoverSignalsForVisiblePapers}
-        onImportNew={handleImportNewPapers}
-        onSortChange={(nextSortKey) => void handleSortChange(nextSortKey)}
-        sortKey={sortKey}
+        onCopyNotebookPrompt={handleCopyNotebookPrompt}
+        onCopyPickedPdfUrls={handleCopyPickedPdfUrls}
+        onDownloadPickedMarkdown={handleDownloadPickedMarkdown}
+        onDownloadPickedPdfZip={handleDownloadPickedPdfZip}
+        onLoadPicked={handleLoadPickedPapers}
+        viewMode={viewMode}
       />
 
       {isLoading && <p className="notice">論文一覧を読み込み中です。</p>}
 
-      {errorMessage && (
-        <p className="notice error">Backend APIに接続できません: {errorMessage}</p>
+      {errorNotice && (
+        <section className="notice error operational-error" aria-label="エラー詳細">
+          <p className="error-title">{errorNotice.title}</p>
+          <p>{errorNotice.message}</p>
+          <ul>
+            {errorNotice.checks.map((check) => (
+              <li key={check}>{check}</li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {importMessage && <p className="notice success">{importMessage}</p>}
@@ -404,10 +477,16 @@ export default function HomePage() {
         <p className="notice">関連シグナルを確認中です。</p>
       )}
 
-      {!isLoading && !errorMessage && papers.length === 0 && (
-        <p className="notice">
-          論文はまだありません。Import New で確認用データを取り込んでください。
-        </p>
+      {!isLoading && !errorNotice && papers.length === 0 && (
+        <section className="notice empty-state" aria-label="今日の論文リスト未生成">
+          <p className="error-title">今日の論文リストはまだ生成されていません</p>
+          <p>4:00 JSTの定期取り込みが未実行、または保存に失敗している可能性があります。</p>
+          <ul>
+            <li>cronが `backend/scripts/import_daily_feed.py` を4:00 JSTに実行しているか確認してください。</li>
+            <li>daily_paper_items に今日の日付の行があるか確認してください。</li>
+            <li>取り込みが失敗している場合はbackendログとdaily_import_runsを確認してください。</li>
+          </ul>
+        </section>
       )}
 
       <PaperList
@@ -415,15 +494,16 @@ export default function HomePage() {
         currentIndex={currentIndex}
         decidedActions={decidedActions}
         isAuthenticated={authSession !== null}
-        isDiscoveringSignals={isDiscoveringSignals}
         onCreateAction={handleCreatePaperAction}
-        onDiscoverSignals={handleDiscoverSignalsForPaper}
+        onGenerateAnalysis={handleGeneratePaperAIAnalysis}
         onMoveNext={handleMoveNext}
         onMovePrevious={handleMovePrevious}
         papers={screeningPapers}
+        paperAIAnalysis={currentPaper ? paperAIAnalyses[currentPaper.id] : null}
+        isGeneratingAnalysis={isGeneratingAnalysis}
         pendingAction={pendingAction}
         relatedSignals={currentPaper ? relatedSignals[currentPaper.id] ?? [] : []}
-        sourceErrors={currentPaper ? sourceErrorsByPaper[currentPaper.id] ?? [] : []}
+        sourceErrors={[]}
       />
     </main>
   );

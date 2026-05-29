@@ -2,11 +2,8 @@
 
 from app.clients import github, qiita
 from app.repositories import paper_repository
-from app.schemas.paper import (
-    PaperResponse,
-    RelatedSignalCreate,
-    RelatedSignalDiscoveryResponse,
-)
+from app.schemas.papers import PaperResponse
+from app.schemas.signals import RelatedSignalCreate, RelatedSignalDiscoveryResponse
 
 
 def build_signal_search_queries(paper: PaperResponse) -> list[str]:

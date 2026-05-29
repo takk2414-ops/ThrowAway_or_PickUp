@@ -32,14 +32,20 @@ def _build_auth_api_url(supabase_url: str) -> str:
 def create_supabase_client(settings: Settings) -> httpx.Client:
     """Supabase REST APIへ接続するためのHTTP clientを作ります。"""
 
-    if not settings.supabase_anon_key:
-        raise SupabaseConfigError("SUPABASE_ANON_KEY is required")
+    supabase_api_key = (
+        settings.supabase_service_role_key
+        or settings.supabase_anon_key
+    )
+    if not supabase_api_key:
+        raise SupabaseConfigError(
+            "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY is required"
+        )
 
     return httpx.Client(
         base_url=_build_rest_api_url(settings.supabase_url),
         headers={
-            "apikey": settings.supabase_anon_key,
-            "Authorization": f"Bearer {settings.supabase_anon_key}",
+            "apikey": supabase_api_key,
+            "Authorization": f"Bearer {supabase_api_key}",
             "Content-Type": "application/json",
         },
         timeout=10.0,

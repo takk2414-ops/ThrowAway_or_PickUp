@@ -1,21 +1,25 @@
 """論文に関するビジネスロジックを担当する service です。"""
 
+from datetime import date
 from uuid import UUID
 
 from app.clients import arxiv
 from app.repositories import paper_repository
-from app.schemas.paper import (
+from app.schemas.actions import PaperActionCreate, PaperActionResponse
+from app.schemas.imports import (
     ArxivImportRequest,
     ArxivImportResponse,
-    PaperActionCreate,
-    PaperActionResponse,
-    PaperCreate,
-    PaperResponse,
+    DailyImportRequest,
+    DailyImportResponse,
+)
+from app.schemas.papers import PaperCreate, PaperResponse
+from app.schemas.signals import (
     RelatedSignalCreate,
     RelatedSignalDiscoveryResponse,
     RelatedSignalResponse,
 )
-from app.services import signal_discovery_service
+from app.services import daily_feed_service, signal_discovery_service
+from app.utils.time import today_jst
 
 
 PaperStorageError = paper_repository.PaperRepositoryError
@@ -24,6 +28,11 @@ PaperImportError = arxiv.ArxivClientError
 
 def list_papers() -> list[PaperResponse]:
     return paper_repository.list_papers()
+
+
+def list_today_papers(target_date: date | None = None) -> list[PaperResponse]:
+    import_date = target_date or today_jst()
+    return paper_repository.list_today_papers(import_date)
 
 
 def get_paper(paper_id: UUID) -> PaperResponse | None:
@@ -46,6 +55,12 @@ def import_arxiv_papers(
         imported_count=len(papers),
         papers=papers,
     )
+
+
+def import_daily_papers(
+    import_request: DailyImportRequest,
+) -> DailyImportResponse:
+    return daily_feed_service.import_daily_feed(import_request)
 
 
 def create_paper_action(
@@ -99,6 +114,22 @@ def discover_related_signals(
 
 def list_paper_actions(paper_id: UUID) -> list[PaperActionResponse]:
     return paper_repository.list_paper_actions(paper_id)
+
+
+def list_picked_papers(user_id: UUID) -> list[PaperResponse]:
+    latest_actions_by_paper: dict[UUID, PaperActionResponse] = {}
+    for action in paper_repository.list_user_paper_actions(user_id):
+        if action.paper_id not in latest_actions_by_paper:
+            latest_actions_by_paper[action.paper_id] = action
+
+    picked_papers: list[PaperResponse] = []
+    for paper_id, action in latest_actions_by_paper.items():
+        if action.action != "pickup":
+            continue
+        paper = paper_repository.get_paper(paper_id)
+        if paper is not None:
+            picked_papers.append(paper)
+    return picked_papers
 
 
 def clear_papers() -> None:

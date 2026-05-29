@@ -5,7 +5,7 @@ from functools import lru_cache
 
 import httpx
 
-from app.schemas.paper import RelatedSignalCreate
+from app.schemas.signals import RelatedSignalCreate
 
 
 GITHUB_API_BASE_URL = "https://api.github.com/"

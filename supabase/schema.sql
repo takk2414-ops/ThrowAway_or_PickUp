@@ -58,6 +58,24 @@ create table if not exists daily_paper_items (
   unique (target_date, paper_id)
 );
 
+-- 日次取り込みの実行履歴です。
+-- 4:00 JSTの定期処理が成功/失敗したかを記録します。
+create table if not exists daily_import_runs (
+  id uuid primary key default gen_random_uuid(),
+
+  import_date date not null,
+  source text not null,
+  status text not null check (status in ('success', 'failed')),
+  imported_count integer not null default 0 check (imported_count >= 0),
+  error_message text,
+
+  started_at timestamptz not null default now(),
+  finished_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  unique (import_date, source)
+);
+
 -- 論文に紐づく周辺情報を保存するテーブルです。
 -- GitHub実装、Qiita記事、Hacker Newsの反応など、
 -- 論文以外の技術シグナルを扱います。
@@ -103,6 +121,72 @@ create table if not exists related_signals (
   unique (paper_id, source_url)
 );
 
+-- Zennは公式APIとして扱いにくいため、自動探索対象から外します。
+-- 既存DBに古いZenn行や古いcheck制約がある場合に備えて更新します。
+delete from related_signals
+  where source_type = 'zenn';
+
+alter table related_signals
+  drop constraint if exists related_signals_source_type_check;
+
+alter table related_signals
+  add constraint related_signals_source_type_check
+  check (
+    source_type in (
+      'github',
+      'qiita',
+      'hacker_news',
+      'reddit',
+      'x',
+      'hugging_face',
+      'blog',
+      'other'
+    )
+  );
+
+-- OpenAI/Geminiなどで生成した論文分析結果を保存するテーブルです。
+-- 画面表示時に毎回AI APIを呼ばず、事前生成した分析を再利用します。
+create table if not exists paper_ai_analyses (
+  id uuid primary key default gen_random_uuid(),
+
+  -- 分析対象の論文です。論文が削除されたら分析結果も削除します。
+  paper_id uuid not null references papers(id) on delete cascade,
+
+  -- 分析に使ったAI providerとmodelです。
+  provider text not null,
+  model text not null,
+
+  -- Abstractをもとにした日本語要約です。
+  summary_ja text not null,
+
+  -- 実装する難しさです。1が易しく、5が難しい目安です。
+  implementation_difficulty integer not null check (
+    implementation_difficulty between 1 and 5
+  ),
+  implementation_reason text not null,
+
+  -- 論文文章を読む難しさです。1が易しく、5が難しい目安です。
+  reading_difficulty integer not null check (
+    reading_difficulty between 1 and 5
+  ),
+  reading_reason text not null,
+
+  -- 数学的な難しさです。1が易しく、5が難しい目安です。
+  math_difficulty integer not null check (
+    math_difficulty between 1 and 5
+  ),
+  math_reason text not null,
+
+  -- APIレスポンスや将来の追加メタデータを保存します。
+  raw_response jsonb not null default '{}'::jsonb,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- 同じ論文を同じprovider/modelで重複分析しないようにします。
+  unique (paper_id, provider, model)
+);
+
 -- ユーザーが論文に対して行った操作履歴を保存するテーブルです。
 -- pickup / save / skip を履歴として残します。
 create table if not exists user_paper_actions (
@@ -136,6 +220,9 @@ create index if not exists idx_daily_paper_items_target_date
 create index if not exists idx_daily_paper_items_paper_id
   on daily_paper_items (paper_id);
 
+create index if not exists idx_daily_import_runs_import_date
+  on daily_import_runs (import_date desc, source);
+
 create index if not exists idx_related_signals_paper_id
   on related_signals (paper_id);
 
@@ -144,6 +231,12 @@ create index if not exists idx_related_signals_source_type
 
 create index if not exists idx_related_signals_published_at
   on related_signals (published_at desc);
+
+create index if not exists idx_paper_ai_analyses_paper_id
+  on paper_ai_analyses (paper_id);
+
+create index if not exists idx_paper_ai_analyses_provider_model
+  on paper_ai_analyses (provider, model);
 
 create index if not exists idx_user_paper_actions_paper_id
   on user_paper_actions (paper_id);
