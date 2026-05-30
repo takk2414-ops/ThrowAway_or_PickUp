@@ -45,6 +45,29 @@ def _analysis_json_schema() -> dict[str, Any]:
         "type": "object",
         "additionalProperties": False,
         "properties": {
+            "title_ja": {
+                "type": "string",
+                "description": (
+                    "論文タイトルの日本語補助訳。英語の専門用語、モデル名、"
+                    "データセット名、固有名詞は無理に訳さず、1文以内で自然に補う。"
+                ),
+            },
+            "what_is_it_ja": {
+                "type": "string",
+                "description": "この論文が何の研究かを、初心者にも分かる1〜2文で説明する。",
+            },
+            "novelty_ja": {
+                "type": "string",
+                "description": "既存研究や普通の方法と比べて何が新しいかを1〜2文で説明する。",
+            },
+            "why_it_matters_ja": {
+                "type": "string",
+                "description": "なぜ重要か、実務や研究で何が嬉しいかを1〜2文で説明する。",
+            },
+            "recommended_for_ja": {
+                "type": "string",
+                "description": "どんな読者が読むべきかを、対象分野や関心で1文で説明する。",
+            },
             "summary_ja": {
                 "type": "string",
                 "description": (
@@ -78,6 +101,11 @@ def _analysis_json_schema() -> dict[str, Any]:
             },
         },
         "required": [
+            "title_ja",
+            "what_is_it_ja",
+            "novelty_ja",
+            "why_it_matters_ja",
+            "recommended_for_ja",
             "summary_ja",
             "implementation_difficulty",
             "implementation_reason",
@@ -99,6 +127,12 @@ def _build_analysis_prompt(paper: PaperResponse) -> str:
         "過度に抽象的な表現ではなく、「何をする研究か」「何が嬉しいか」が"
         "分かる文章にしてください。\n"
         "難易度は1〜5で、1が易しい、5が非常に難しいという意味です。\n"
+        "title_jaには、原題を置き換えるのではなく、原題の下に補助表示するための"
+        "自然な日本語タイトルを1文以内で書いてください。"
+        "専門用語、モデル名、データセット名、固有名詞は英語のまま残してください。\n"
+        "what_is_it_ja / novelty_ja / why_it_matters_ja / recommended_for_ja は、"
+        "画面でそのまま見出し付きで表示します。各項目は短く、判断材料として使える"
+        "具体的な日本語にしてください。\n"
         "Abstractだけでは判断しきれない場合は、推測であることが分かる理由にしてください。\n\n"
         f"Title: {paper.title}\n"
         f"Authors: {authors}\n"

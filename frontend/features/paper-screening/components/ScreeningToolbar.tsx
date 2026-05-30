@@ -9,6 +9,7 @@ type ScreeningToolbarProps = {
   onDownloadPickedMarkdown: () => void;
   onDownloadPickedPdfZip: () => void;
   onLoadPicked: () => void;
+  onLoadToday: () => void;
   viewMode: PaperViewMode;
 };
 
@@ -21,20 +22,25 @@ export function ScreeningToolbar({
   onDownloadPickedMarkdown,
   onDownloadPickedPdfZip,
   onLoadPicked,
+  onLoadToday,
   viewMode,
 }: ScreeningToolbarProps) {
   const exportDisabled = !canExportPicked || isExportingPicked;
+  const primaryButtonLabel =
+    viewMode === "picked" ? "最新論文を表示" : "ピックアップ済み論文を表示";
+  const handlePrimaryButtonClick =
+    viewMode === "picked" ? onLoadToday : onLoadPicked;
 
   return (
     <section className="screening-toolbar" aria-label="論文表示操作">
       <div className="toolbar-actions">
         <button
-          className={viewMode === "picked" ? "secondary-button active" : "secondary-button"}
+          className="secondary-button"
           disabled={isLoadingSignals}
-          onClick={onLoadPicked}
+          onClick={handlePrimaryButtonClick}
           type="button"
         >
-          ピックアップ済み
+          {primaryButtonLabel}
         </button>
         {viewMode === "picked" && (
           <>

@@ -13,6 +13,11 @@ def build_analysis_payload() -> dict:
         "paper_id": uuid4(),
         "provider": "openai",
         "model": "gpt-4.1-mini",
+        "title_ja": "RAGの検索精度を改善する手法",
+        "what_is_it_ja": "RAGの検索精度を改善する研究です。",
+        "novelty_ja": "検索結果の扱い方を工夫している点が新しいです。",
+        "why_it_matters_ja": "回答品質を上げる判断材料になります。",
+        "recommended_for_ja": "RAGや検索システムに関心がある人向けです。",
         "summary_ja": "RAGの検索精度を改善する手法を提案している論文です。",
         "implementation_difficulty": 3,
         "implementation_reason": "既存の検索基盤があれば実装しやすいためです。",
@@ -28,6 +33,8 @@ def test_paper_ai_analysis_create_accepts_valid_payload() -> None:
     analysis = PaperAIAnalysisCreate.model_validate(build_analysis_payload())
 
     assert analysis.provider == "openai"
+    assert analysis.title_ja == "RAGの検索精度を改善する手法"
+    assert analysis.what_is_it_ja == "RAGの検索精度を改善する研究です。"
     assert analysis.implementation_difficulty == 3
 
 

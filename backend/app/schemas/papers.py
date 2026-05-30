@@ -14,6 +14,8 @@ class PaperBase(BaseModel):
     arxiv_id: str | None = None
     doi: str | None = None
     authors: list[str] = Field(default_factory=list)
+    institutions: list[str] = Field(default_factory=list)
+    location: str | None = Field(default=None, max_length=200)
     published_at: datetime | None = None
 
     @field_validator("title")
@@ -24,6 +26,14 @@ class PaperBase(BaseModel):
         if not stripped_title:
             raise ValueError("title must not be blank")
         return stripped_title
+
+    @field_validator("location")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped_value = value.strip()
+        return stripped_value or None
 
 
 class PaperCreate(PaperBase):

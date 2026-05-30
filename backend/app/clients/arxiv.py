@@ -3,6 +3,8 @@
 from datetime import datetime
 from functools import lru_cache
 import re
+import threading
+import time
 from xml.etree import ElementTree
 
 import httpx
@@ -13,10 +15,19 @@ from app.schemas.papers import PaperCreate
 ARXIV_API_BASE_URL = "https://export.arxiv.org/api/"
 ATOM_NS = "{http://www.w3.org/2005/Atom}"
 ARXIV_NS = "{http://arxiv.org/schemas/atom}"
+ARXIV_REQUEST_INTERVAL_SECONDS = 3.1
+ARXIV_MAX_ATTEMPTS = 3
+ARXIV_DEFAULT_RETRY_AFTER_SECONDS = 10.0
+_request_lock = threading.Lock()
+_last_request_monotonic = 0.0
 
 
 class ArxivClientError(RuntimeError):
     """arXiv API への問い合わせやレスポンス解析に失敗した場合のエラーです。"""
+
+
+class ArxivRateLimitError(ArxivClientError):
+    """arXiv API のrate limitに達した場合のエラーです。"""
 
 
 @lru_cache
@@ -25,7 +36,7 @@ def get_arxiv_client() -> httpx.Client:
         base_url=ARXIV_API_BASE_URL,
         headers={"User-Agent": "ThrowAway_or_PickUp/0.1"},
         follow_redirects=True,
-        timeout=15.0,
+        timeout=httpx.Timeout(60.0, connect=10.0),
     )
 
 
@@ -79,13 +90,54 @@ def _parse_entry(entry: ElementTree.Element) -> PaperCreate:
     )
 
 
+def _wait_until_request_allowed() -> None:
+    global _last_request_monotonic
+
+    if ARXIV_REQUEST_INTERVAL_SECONDS <= 0:
+        return
+
+    now = time.monotonic()
+    elapsed = now - _last_request_monotonic
+    wait_seconds = ARXIV_REQUEST_INTERVAL_SECONDS - elapsed
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+
+    _last_request_monotonic = time.monotonic()
+
+
+def _parse_retry_after_seconds(response: httpx.Response) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is None:
+        return ARXIV_DEFAULT_RETRY_AFTER_SECONDS
+
+    try:
+        return max(float(retry_after), ARXIV_REQUEST_INTERVAL_SECONDS)
+    except ValueError:
+        return ARXIV_DEFAULT_RETRY_AFTER_SECONDS
+
+
+def _request_arxiv(params: dict[str, str]) -> httpx.Response:
+    with _request_lock:
+        _wait_until_request_allowed()
+        return get_arxiv_client().get("query", params=params)
+
+
 def _fetch_papers_with_params(params: dict[str, str]) -> list[PaperCreate]:
     last_error: httpx.HTTPError | None = None
-    for _ in range(2):
+    for attempt in range(ARXIV_MAX_ATTEMPTS):
         try:
-            response = get_arxiv_client().get("query", params=params)
+            response = _request_arxiv(params)
             response.raise_for_status()
             break
+        except httpx.HTTPStatusError as error:
+            last_error = error
+            if error.response.status_code != 429:
+                continue
+            if attempt >= ARXIV_MAX_ATTEMPTS - 1:
+                raise ArxivRateLimitError(
+                    "arXiv rate limit exceeded"
+                ) from error
+            time.sleep(_parse_retry_after_seconds(error.response))
         except httpx.HTTPError as error:
             last_error = error
     else:

@@ -1,6 +1,6 @@
 """Supabase上の論文データへアクセスする repository です。"""
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 import httpx
@@ -359,15 +359,24 @@ def list_paper_actions(paper_id: UUID) -> list[PaperActionResponse]:
     ]
 
 
-def list_user_paper_actions(user_id: UUID) -> list[PaperActionResponse]:
+def list_user_paper_actions(
+    user_id: UUID,
+    created_at_or_after: datetime | None = None,
+) -> list[PaperActionResponse]:
+    params = {
+        "select": "*",
+        "user_id": f"eq.{user_id}",
+        "order": "created_at.desc",
+    }
+    if created_at_or_after is not None:
+        params["created_at"] = (
+            f"gte.{created_at_or_after.isoformat().replace('+00:00', 'Z')}"
+        )
+
     response = _request_supabase(
         "GET",
         "user_paper_actions",
-        params={
-            "select": "*",
-            "user_id": f"eq.{user_id}",
-            "order": "created_at.desc",
-        },
+        params=params,
     )
     return [
         PaperActionResponse.model_validate(row)

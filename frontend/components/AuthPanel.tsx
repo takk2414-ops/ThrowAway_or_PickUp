@@ -39,71 +39,83 @@ export function AuthPanel({
   return (
     <section className="auth-panel" aria-label="ログイン">
       {authSession ? (
-        <div className="auth-row">
-          <div>
-            <p className="auth-label">ログイン中</p>
-            <p className="auth-email">{authSession.email ?? authSession.userId}</p>
+        <details className="auth-menu">
+          <summary className="secondary-button auth-summary">ログイン中</summary>
+          <div className="auth-popover">
+            <div className="auth-row">
+              <div>
+                <p className="auth-label">ログイン中</p>
+                <p className="auth-email">{authSession.email ?? authSession.userId}</p>
+              </div>
+              <button className="secondary-button" onClick={onSignOut} type="button">
+                ログアウト
+              </button>
+            </div>
+            {authMessage && <p className="auth-message">{authMessage}</p>}
+            {authError && <p className="auth-message error">{authError}</p>}
           </div>
-          <button className="secondary-button" onClick={onSignOut} type="button">
-            ログアウト
-          </button>
-        </div>
+        </details>
       ) : (
-        <form className="auth-form" onSubmit={onSubmit}>
-          <div className="auth-tabs" role="tablist" aria-label="認証モード">
-            <button
-              aria-selected={authMode === "signin"}
-              className={authMode === "signin" ? "auth-tab active" : "auth-tab"}
-              onClick={() => onAuthModeChange("signin")}
-              role="tab"
-              type="button"
-            >
-              ログイン
-            </button>
-            <button
-              aria-selected={authMode === "signup"}
-              className={authMode === "signup" ? "auth-tab active" : "auth-tab"}
-              onClick={() => onAuthModeChange("signup")}
-              role="tab"
-              type="button"
-            >
-              新規登録
-            </button>
-          </div>
-          <label>
-            メールアドレス
-            <input
-              autoComplete="email"
-              onChange={(event) => onEmailChange(event.target.value)}
-              required
-              type="email"
-              value={email}
-            />
-          </label>
-          <label>
-            パスワード
-            <input
-              autoComplete={authMode === "signin" ? "current-password" : "new-password"}
-              minLength={6}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              required
-              type="password"
-              value={password}
-            />
-          </label>
-          <button className="primary-button" disabled={isAuthPending} type="submit">
-            {isAuthPending ? "送信中..." : authMode === "signin" ? "ログイン" : "新規登録"}
-          </button>
-        </form>
-      )}
+        <details className="auth-menu">
+          <summary className="primary-button auth-summary">ログイン</summary>
+          <div className="auth-popover">
+            <form className="auth-form" onSubmit={onSubmit}>
+              <div className="auth-tabs" role="tablist" aria-label="認証モード">
+                <button
+                  aria-selected={authMode === "signin"}
+                  className={authMode === "signin" ? "auth-tab active" : "auth-tab"}
+                  onClick={() => onAuthModeChange("signin")}
+                  role="tab"
+                  type="button"
+                >
+                  ログイン
+                </button>
+                <button
+                  aria-selected={authMode === "signup"}
+                  className={authMode === "signup" ? "auth-tab active" : "auth-tab"}
+                  onClick={() => onAuthModeChange("signup")}
+                  role="tab"
+                  type="button"
+                >
+                  新規登録
+                </button>
+              </div>
+              <label>
+                メールアドレス
+                <input
+                  autoComplete="email"
+                  onChange={(event) => onEmailChange(event.target.value)}
+                  required
+                  type="email"
+                  value={email}
+                />
+              </label>
+              <label>
+                パスワード
+                <input
+                  autoComplete={authMode === "signin" ? "current-password" : "new-password"}
+                  minLength={6}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  required
+                  type="password"
+                  value={password}
+                />
+              </label>
+              <button className="primary-button" disabled={isAuthPending} type="submit">
+                {isAuthPending ? "送信中..." : authMode === "signin" ? "ログイン" : "新規登録"}
+              </button>
+            </form>
 
-      {!isSupabaseAuthConfigured() && (
-        <p className="auth-message error">
-          NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。
-        </p>
+            {!isSupabaseAuthConfigured() && (
+              <p className="auth-message error">
+                NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY を設定してください。
+              </p>
+            )}
+            {authMessage && <p className="auth-message">{authMessage}</p>}
+            {authError && <p className="auth-message error">{authError}</p>}
+          </div>
+        </details>
       )}
-      {authMessage && <p className="auth-message">{authMessage}</p>}
-      {authError && <p className="auth-message error">{authError}</p>}
     </section>
   );
 }

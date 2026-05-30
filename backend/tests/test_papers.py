@@ -31,8 +31,10 @@ from app.schemas.paper import (
 )
 from app.services import auth_service
 from app.services import daily_feed_service
+from app.services import paper_service
 from app.services import paper_export_service
 from app.services import rising_service
+from app.utils import time as time_utils
 from app.services.paper_service import list_paper_actions
 
 
@@ -70,6 +72,8 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
             "arxiv_id": payload.get("arxiv_id"),
             "doi": payload.get("doi"),
             "authors": payload.get("authors", []),
+            "institutions": payload.get("institutions", []),
+            "location": payload.get("location"),
             "published_at": payload.get("published_at"),
             "created_at": now,
             "updated_at": now,
@@ -91,6 +95,8 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
                             "source_url": payload.get("source_url"),
                             "doi": payload.get("doi"),
                             "authors": payload.get("authors", []),
+                            "institutions": payload.get("institutions", []),
+                            "location": payload.get("location"),
                             "published_at": payload.get("published_at"),
                             "updated_at": now_iso(),
                         }
@@ -158,6 +164,11 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
             "paper_id": payload["paper_id"],
             "provider": payload["provider"],
             "model": payload["model"],
+            "title_ja": payload.get("title_ja"),
+            "what_is_it_ja": payload.get("what_is_it_ja"),
+            "novelty_ja": payload.get("novelty_ja"),
+            "why_it_matters_ja": payload.get("why_it_matters_ja"),
+            "recommended_for_ja": payload.get("recommended_for_ja"),
             "summary_ja": payload["summary_ja"],
             "implementation_difficulty": payload["implementation_difficulty"],
             "implementation_reason": payload["implementation_reason"],
@@ -223,6 +234,14 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
                     action
                     for action in rows
                     if action["user_id"] == user_id
+                ]
+            created_at_filter = request.url.params.get("created_at")
+            if created_at_filter and created_at_filter.startswith("gte."):
+                created_at = created_at_filter.removeprefix("gte.")
+                rows = [
+                    action
+                    for action in rows
+                    if action["created_at"] >= created_at
                 ]
             if order == "created_at.desc":
                 rows = list(reversed(rows))
@@ -511,6 +530,11 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
                                 {
                                     "text": json.dumps(
                                         {
+                                            "title_ja": "検索拡張型Backend API設計",
+                                            "what_is_it_ja": "検索を使うBackend APIの設計を扱う研究です。",
+                                            "novelty_ja": "RAGをAPI設計の観点から整理している点が新しいです。",
+                                            "why_it_matters_ja": "実装時の設計判断を速くできる可能性があります。",
+                                            "recommended_for_ja": "RAGやBackend API設計に関心がある人向けです。",
                                             "summary_ja": "RAG API設計に関する論文です。",
                                             "implementation_difficulty": 3,
                                             "implementation_reason": (
@@ -573,6 +597,8 @@ def supabase_mock(monkeypatch: pytest.MonkeyPatch):
         "get_arxiv_client",
         lambda: mock_arxiv_client,
     )
+    monkeypatch.setattr(arxiv_client, "ARXIV_REQUEST_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(arxiv_client, "ARXIV_DEFAULT_RETRY_AFTER_SECONDS", 0)
     monkeypatch.setattr(
         github_client,
         "get_github_client",
@@ -694,6 +720,32 @@ def test_import_arxiv_papers_rejects_too_large_max_results() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_import_arxiv_papers_returns_rate_limit_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fetch_papers_for_test(search_query: str, max_results: int) -> list[PaperCreate]:
+        raise arxiv_client.ArxivRateLimitError("arXiv rate limit exceeded")
+
+    monkeypatch.setattr(
+        arxiv_client,
+        "fetch_papers",
+        fetch_papers_for_test,
+    )
+
+    response = client.post(
+        "/papers/import/arxiv",
+        json={
+            "search_query": "cat:cs.SE",
+            "max_results": 1,
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "detail": "arXiv rate limit exceeded. Please retry later."
+    }
 
 
 def test_import_daily_papers_runs_once_per_day() -> None:
@@ -843,6 +895,18 @@ def test_list_today_papers() -> None:
     assert data[0]["arxiv_id"] == "2501.01234"
 
 
+def test_list_today_papers_auto_imports_when_missing(supabase_mock) -> None:
+    response = client.get("/papers/today")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["arxiv_id"] == "2501.01234"
+    assert len(supabase_mock["daily_paper_items"]) == 1
+    assert len(supabase_mock["daily_import_runs"]) == 1
+    assert supabase_mock["daily_import_runs"][0]["status"] == "success"
+
+
 def test_upsert_and_get_paper_ai_analysis_repository() -> None:
     create_response = client.post(
         "/papers",
@@ -858,6 +922,11 @@ def test_upsert_and_get_paper_ai_analysis_repository() -> None:
             paper_id=paper_id,
             provider="gemini",
             model="gemini-2.5-flash",
+            title_ja="Backend API分析のための論文",
+            what_is_it_ja="Backend APIの分析方法を扱う論文です。",
+            novelty_ja="API分析を論文要約に結びつける点が特徴です。",
+            why_it_matters_ja="API設計の判断材料を整理しやすくなります。",
+            recommended_for_ja="Backend API設計を学ぶ人向けです。",
             summary_ja="Backend API分析に関する論文です。",
             implementation_difficulty=3,
             implementation_reason="APIとDBの実装が必要なためです。",
@@ -878,6 +947,8 @@ def test_upsert_and_get_paper_ai_analysis_repository() -> None:
     assert analysis.paper_id == paper_id
     assert fetched_analysis is not None
     assert fetched_analysis.id == analysis.id
+    assert fetched_analysis.title_ja == "Backend API分析のための論文"
+    assert fetched_analysis.what_is_it_ja == "Backend APIの分析方法を扱う論文です。"
     assert fetched_analysis.summary_ja == "Backend API分析に関する論文です。"
 
 
@@ -902,6 +973,8 @@ def test_generate_paper_ai_analysis() -> None:
     assert data["paper_id"] == paper_id
     assert data["provider"] == "gemini"
     assert data["model"] == "gemini-2.5-flash"
+    assert data["title_ja"] == "検索拡張型Backend API設計"
+    assert data["what_is_it_ja"] == "検索を使うBackend APIの設計を扱う研究です。"
     assert data["summary_ja"] == "RAG API設計に関する論文です。"
     assert data["implementation_difficulty"] == 3
 
@@ -1141,6 +1214,73 @@ def test_list_picked_papers_returns_latest_pickup_only() -> None:
     assert len(data) == 1
     assert data[0]["id"] == first_paper_id
     assert data[0]["title"] == "Picked paper"
+
+
+def test_list_picked_papers_resets_at_4am_jst(
+    monkeypatch: pytest.MonkeyPatch,
+    supabase_mock,
+) -> None:
+    monkeypatch.setattr(
+        paper_service,
+        "current_daily_reset_started_at",
+        lambda: datetime(2026, 5, 28, 19, 0, tzinfo=UTC),
+    )
+
+    old_create_response = client.post(
+        "/papers",
+        json={"title": "Yesterday picked paper"},
+    )
+    today_create_response = client.post(
+        "/papers",
+        json={"title": "Today picked paper"},
+    )
+    old_paper_id = old_create_response.json()["id"]
+    today_paper_id = today_create_response.json()["id"]
+
+    old_action_response = client.post(
+        f"/papers/{old_paper_id}/actions",
+        headers=AUTH_HEADERS,
+        json={"action": "pickup"},
+    )
+    today_action_response = client.post(
+        f"/papers/{today_paper_id}/actions",
+        headers=AUTH_HEADERS,
+        json={"action": "pickup"},
+    )
+    supabase_mock["actions"][0]["created_at"] = "2026-05-28T18:59:00Z"
+    supabase_mock["actions"][1]["created_at"] = "2026-05-28T19:01:00Z"
+
+    response = client.get("/papers/picked", headers=AUTH_HEADERS)
+
+    assert old_action_response.status_code == 201
+    assert today_action_response.status_code == 201
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["id"] == today_paper_id
+    assert data[0]["title"] == "Today picked paper"
+
+
+def test_current_daily_reset_started_at_uses_4am_jst_boundary() -> None:
+    before_4am_jst = datetime(2026, 5, 28, 18, 59, tzinfo=UTC)
+    after_4am_jst = datetime(2026, 5, 28, 19, 0, tzinfo=UTC)
+
+    assert time_utils.current_daily_reset_started_at(before_4am_jst) == datetime(
+        2026,
+        5,
+        27,
+        19,
+        0,
+        tzinfo=UTC,
+    )
+    assert time_utils.current_daily_reset_started_at(after_4am_jst) == datetime(
+        2026,
+        5,
+        28,
+        19,
+        0,
+        tzinfo=UTC,
+    )
 
 
 def test_export_picked_papers_for_notebooklm() -> None:

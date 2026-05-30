@@ -31,7 +31,6 @@ import {
 } from "../lib/supabaseAuth";
 import type { AuthSession } from "../lib/supabaseAuth";
 import {
-  API_BASE_URL,
   createPaperAction,
   fetchPickedPapers,
   fetchPickedPapersExport,
@@ -75,6 +74,7 @@ export default function HomePage() {
   const [isAuthPending, setIsAuthPending] = useState(false);
   const screeningPapers = papers;
   const currentPaper = screeningPapers[currentIndex] ?? null;
+  const decidedActionCount = Object.keys(decidedActions).length;
 
   useEffect(() => {
     setAuthSession(loadStoredSession());
@@ -160,6 +160,36 @@ export default function HomePage() {
     loadPaperAIAnalysis();
   }, [currentPaper, paperAIAnalyses]);
 
+  useEffect(() => {
+    if (viewMode !== "picked" || papers.length === 0) {
+      return;
+    }
+
+    const missingPapers = papers.filter((paper) => !(paper.id in paperAIAnalyses));
+    if (missingPapers.length === 0) {
+      return;
+    }
+
+    async function loadPickedPaperAIAnalyses(): Promise<void> {
+      const analysisEntries = await Promise.all(
+        missingPapers.map(async (paper): Promise<[string, PaperAIAnalysis | null]> => {
+          try {
+            return [paper.id, await fetchPaperAIAnalysis(paper.id)];
+          } catch {
+            return [paper.id, null];
+          }
+        }),
+      );
+
+      setPaperAIAnalyses((currentAnalyses) => ({
+        ...currentAnalyses,
+        ...Object.fromEntries(analysisEntries),
+      }));
+    }
+
+    loadPickedPaperAIAnalyses();
+  }, [papers, paperAIAnalyses, viewMode]);
+
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setAuthMessage(null);
@@ -235,6 +265,31 @@ export default function HomePage() {
           buildErrorNotice(error, "ピックアップ済み論文の取得に失敗しました", "picked"),
         );
       }
+    } finally {
+      setIsLoadingSignals(false);
+    }
+  }
+
+  async function handleLoadTodayPapers(): Promise<void> {
+    setIsLoadingSignals(true);
+    setImportMessage(null);
+    setErrorNotice(null);
+    setAuthError(null);
+
+    try {
+      const todayPapers = await fetchTodayPapers();
+      setPapers(todayPapers);
+      setViewMode("today");
+      setCurrentIndex(0);
+      setDecidedActions({});
+      setRelatedSignals({});
+      setPaperAIAnalyses({});
+      setPickedExport(null);
+      setImportMessage(`${todayPapers.length}件の最新論文を読み込みました`);
+    } catch (error) {
+      setErrorNotice(
+        buildErrorNotice(error, "論文一覧の取得に失敗しました", "today"),
+      );
     } finally {
       setIsLoadingSignals(false);
     }
@@ -353,8 +408,12 @@ export default function HomePage() {
         ...currentDecisions,
         [paperId]: action,
       }));
+      const remainingPaperCount = Math.max(screeningPapers.length - 1, 0);
+      setPapers((currentPapers) => (
+        currentPapers.filter((paper) => paper.id !== paperId)
+      ));
       setCurrentIndex((index) => (
-        Math.min(index + 1, Math.max(screeningPapers.length - 1, 0))
+        remainingPaperCount === 0 ? 0 : Math.min(index, remainingPaperCount - 1)
       ));
       setActionState({
         paperId,
@@ -390,12 +449,16 @@ export default function HomePage() {
   }
 
   function handleMovePrevious(): void {
-    setCurrentIndex((index) => Math.max(index - 1, 0));
+    setCurrentIndex((index) => (
+      screeningPapers.length === 0
+        ? 0
+        : (index - 1 + screeningPapers.length) % screeningPapers.length
+    ));
   }
 
   function handleMoveNext(): void {
     setCurrentIndex((index) => (
-      Math.min(index + 1, Math.max(screeningPapers.length - 1, 0))
+      screeningPapers.length === 0 ? 0 : (index + 1) % screeningPapers.length
     ));
   }
 
@@ -420,43 +483,6 @@ export default function HomePage() {
 
   return (
     <main className="page-shell">
-      <section className="page-header">
-        <div>
-          <p className="eyebrow">論文スクリーニング</p>
-          <h1>ThrowAway_or_PickUp</h1>
-        </div>
-        <div className="header-actions">
-          <p className="api-url">{API_BASE_URL}</p>
-        </div>
-      </section>
-
-      <AuthPanel
-        authError={authError}
-        authMessage={authMessage}
-        authMode={authMode}
-        authSession={authSession}
-        email={email}
-        isAuthPending={isAuthPending}
-        onAuthModeChange={setAuthMode}
-        onEmailChange={setEmail}
-        onPasswordChange={setPassword}
-        onSignOut={handleSignOut}
-        onSubmit={handleAuthSubmit}
-        password={password}
-      />
-
-      <ScreeningToolbar
-        canExportPicked={viewMode === "picked" && papers.length > 0}
-        isExportingPicked={isExportingPicked}
-        isLoadingSignals={isLoadingSignals}
-        onCopyNotebookPrompt={handleCopyNotebookPrompt}
-        onCopyPickedPdfUrls={handleCopyPickedPdfUrls}
-        onDownloadPickedMarkdown={handleDownloadPickedMarkdown}
-        onDownloadPickedPdfZip={handleDownloadPickedPdfZip}
-        onLoadPicked={handleLoadPickedPapers}
-        viewMode={viewMode}
-      />
-
       {isLoading && <p className="notice">論文一覧を読み込み中です。</p>}
 
       {errorNotice && (
@@ -477,16 +503,26 @@ export default function HomePage() {
         <p className="notice">関連シグナルを確認中です。</p>
       )}
 
-      {!isLoading && !errorNotice && papers.length === 0 && (
+      {!isLoading && !errorNotice && viewMode === "today" && papers.length === 0 && decidedActionCount === 0 && (
         <section className="notice empty-state" aria-label="今日の論文リスト未生成">
-          <p className="error-title">今日の論文リストはまだ生成されていません</p>
-          <p>4:00 JSTの定期取り込みが未実行、または保存に失敗している可能性があります。</p>
+          <p className="error-title">今日表示できる論文がありません</p>
+          <p>自動取り込みは実行されましたが、保存対象の論文が見つからなかった可能性があります。</p>
           <ul>
-            <li>cronが `backend/scripts/import_daily_feed.py` を4:00 JSTに実行しているか確認してください。</li>
+            <li>arXiv / Qiita / GitHub など外部APIの応答をbackendログで確認してください。</li>
             <li>daily_paper_items に今日の日付の行があるか確認してください。</li>
-            <li>取り込みが失敗している場合はbackendログとdaily_import_runsを確認してください。</li>
+            <li>運用環境ではcronが `backend/scripts/import_daily_feed.py` を4:00 JSTに実行しているか確認してください。</li>
           </ul>
         </section>
+      )}
+
+      {!isLoading && !errorNotice && viewMode === "today" && papers.length === 0 && decidedActionCount > 0 && (
+        <p className="notice success">
+          表示中の論文はすべてピックアップ/スキップで判定しました。
+        </p>
+      )}
+
+      {!isLoading && !errorNotice && viewMode === "picked" && papers.length === 0 && (
+        <p className="notice">ピックアップ済み論文はまだありません。</p>
       )}
 
       <PaperList
@@ -500,11 +536,43 @@ export default function HomePage() {
         onMovePrevious={handleMovePrevious}
         papers={screeningPapers}
         paperAIAnalysis={currentPaper ? paperAIAnalyses[currentPaper.id] : null}
+        paperAIAnalysesByPaperId={paperAIAnalyses}
         isGeneratingAnalysis={isGeneratingAnalysis}
         pendingAction={pendingAction}
         relatedSignals={currentPaper ? relatedSignals[currentPaper.id] ?? [] : []}
         sourceErrors={[]}
+        viewMode={viewMode}
       />
+
+      <section className="bottom-dock" aria-label="固定操作">
+        <ScreeningToolbar
+          canExportPicked={viewMode === "picked" && papers.length > 0}
+          isExportingPicked={isExportingPicked}
+          isLoadingSignals={isLoadingSignals}
+          onCopyNotebookPrompt={handleCopyNotebookPrompt}
+          onCopyPickedPdfUrls={handleCopyPickedPdfUrls}
+          onDownloadPickedMarkdown={handleDownloadPickedMarkdown}
+          onDownloadPickedPdfZip={handleDownloadPickedPdfZip}
+          onLoadPicked={handleLoadPickedPapers}
+          onLoadToday={handleLoadTodayPapers}
+          viewMode={viewMode}
+        />
+
+        <AuthPanel
+          authError={authError}
+          authMessage={authMessage}
+          authMode={authMode}
+          authSession={authSession}
+          email={email}
+          isAuthPending={isAuthPending}
+          onAuthModeChange={setAuthMode}
+          onEmailChange={setEmail}
+          onPasswordChange={setPassword}
+          onSignOut={handleSignOut}
+          onSubmit={handleAuthSubmit}
+          password={password}
+        />
+      </section>
     </main>
   );
 }

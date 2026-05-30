@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import Header, HTTPException, status
 
+from app.clients import arxiv
 from app.clients.supabase import SupabaseConfigError
 from app.services import auth_service, paper_analysis_service, paper_service
 
@@ -36,6 +37,12 @@ def raise_storage_http_error(error: Exception) -> NoReturn:
 
 
 def raise_import_http_error(error: Exception) -> NoReturn:
+    if isinstance(error, arxiv.ArxivRateLimitError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="arXiv rate limit exceeded. Please retry later.",
+        ) from error
+
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail="arXiv import request failed",

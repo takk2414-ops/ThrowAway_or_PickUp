@@ -19,7 +19,7 @@ from app.schemas.signals import (
     RelatedSignalResponse,
 )
 from app.services import daily_feed_service, signal_discovery_service
-from app.utils.time import today_jst
+from app.utils.time import current_daily_reset_started_at, today_jst
 
 
 PaperStorageError = paper_repository.PaperRepositoryError
@@ -33,6 +33,20 @@ def list_papers() -> list[PaperResponse]:
 def list_today_papers(target_date: date | None = None) -> list[PaperResponse]:
     import_date = target_date or today_jst()
     return paper_repository.list_today_papers(import_date)
+
+
+def list_or_import_today_papers(
+    target_date: date | None = None,
+) -> list[PaperResponse]:
+    import_date = target_date or today_jst()
+    papers = paper_repository.list_today_papers(import_date)
+    if papers:
+        return papers
+
+    return daily_feed_service.import_daily_feed(
+        DailyImportRequest(),
+        target_date=import_date,
+    ).papers
 
 
 def get_paper(paper_id: UUID) -> PaperResponse | None:
@@ -118,7 +132,11 @@ def list_paper_actions(paper_id: UUID) -> list[PaperActionResponse]:
 
 def list_picked_papers(user_id: UUID) -> list[PaperResponse]:
     latest_actions_by_paper: dict[UUID, PaperActionResponse] = {}
-    for action in paper_repository.list_user_paper_actions(user_id):
+    reset_started_at = current_daily_reset_started_at()
+    for action in paper_repository.list_user_paper_actions(
+        user_id,
+        created_at_or_after=reset_started_at,
+    ):
         if action.paper_id not in latest_actions_by_paper:
             latest_actions_by_paper[action.paper_id] = action
 

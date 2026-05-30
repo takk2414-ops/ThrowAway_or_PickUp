@@ -48,7 +48,14 @@ def generate_paper_ai_analysis(
             provider=generate_request.provider,
             model=resolved_model,
         )
-        if existing_analysis is not None:
+        if (
+            existing_analysis is not None
+            and existing_analysis.title_ja is not None
+            and existing_analysis.what_is_it_ja is not None
+            and existing_analysis.novelty_ja is not None
+            and existing_analysis.why_it_matters_ja is not None
+            and existing_analysis.recommended_for_ja is not None
+        ):
             return existing_analysis
 
     if generate_request.provider != "gemini":

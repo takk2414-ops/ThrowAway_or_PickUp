@@ -6,6 +6,8 @@ export type Paper = {
   arxiv_id: string | null;
   doi: string | null;
   authors: string[];
+  institutions?: string[];
+  location?: string | null;
   published_at: string | null;
   created_at: string;
   updated_at: string;
@@ -42,6 +44,11 @@ export type PaperAIAnalysis = {
   paper_id: string;
   provider: "openai" | "gemini" | string;
   model: string;
+  title_ja?: string | null;
+  what_is_it_ja?: string | null;
+  novelty_ja?: string | null;
+  why_it_matters_ja?: string | null;
+  recommended_for_ja?: string | null;
   summary_ja: string;
   implementation_difficulty: number;
   implementation_reason: string;

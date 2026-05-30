@@ -22,6 +22,12 @@ create table if not exists papers (
   -- 著者一覧です。未取得の場合は空配列にします。
   authors text[] not null default '{}',
 
+  -- 著者の所属機関です。複数機関を想定して配列で保存します。
+  institutions text[] not null default '{}',
+
+  -- 論文や発表に紐づく場所です。論文本体では未取得のことが多いためnullを許可します。
+  location text,
+
   -- 論文の公開日時です。
   published_at timestamptz,
 
@@ -155,6 +161,15 @@ create table if not exists paper_ai_analyses (
   -- 分析に使ったAI providerとmodelです。
   provider text not null,
   model text not null,
+
+  -- 原題の下に補助表示する日本語タイトルです。
+  title_ja text,
+
+  -- 画面で見出し付き表示する構造化AI分析です。
+  what_is_it_ja text,
+  novelty_ja text,
+  why_it_matters_ja text,
+  recommended_for_ja text,
 
   -- Abstractをもとにした日本語要約です。
   summary_ja text not null,

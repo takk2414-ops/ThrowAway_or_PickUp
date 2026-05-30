@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 
 from app.clients.supabase import SupabaseConfigError
-from app.routers.dependencies import raise_storage_http_error
+from app.routers.dependencies import raise_import_http_error, raise_storage_http_error
 from app.schemas.papers import PaperCreate, PaperResponse
 from app.services import paper_service
 
@@ -24,7 +24,9 @@ def list_papers() -> list[PaperResponse]:
 @router.get("/today", response_model=list[PaperResponse])
 def list_today_papers() -> list[PaperResponse]:
     try:
-        return paper_service.list_today_papers()
+        return paper_service.list_or_import_today_papers()
+    except paper_service.PaperImportError as error:
+        raise_import_http_error(error)
     except (SupabaseConfigError, paper_service.PaperStorageError) as error:
         raise_storage_http_error(error)
 

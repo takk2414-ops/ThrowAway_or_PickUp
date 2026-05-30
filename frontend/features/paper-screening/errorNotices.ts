@@ -43,6 +43,19 @@ export function buildErrorNotice(
     }
 
     if (error.status === 502) {
+      if (error.detail === "arXiv rate limit exceeded. Please retry later.") {
+        return {
+          title: "arXivのrate limitに達しています",
+          message:
+            "短時間にarXiv APIへ複数回アクセスしたため、一時的に取り込みが制限されています。",
+          checks: [
+            "数十秒から数分待ってから画面を再読み込みしてください。",
+            "開発中に何度も再読み込みすると、初回自動取り込みが連続実行されることがあります。",
+            "運用環境では4:00 JSTのcronで事前生成し、ユーザーアクセス時のarXiv呼び出しを避けるのが安全です。",
+          ],
+        };
+      }
+
       return {
         title:
           context === "analysis"
